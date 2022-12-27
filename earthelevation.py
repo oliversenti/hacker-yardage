@@ -2,8 +2,7 @@ import requests
 import json
 
 
-apikey = "&key=AIzaSyAWDazVVwgKcinDG9geQnGFCMjVViPZ9pc"
-
+key = API_KEY
 
 def calcElevation(lat,lon):
     lat = str(lat)
