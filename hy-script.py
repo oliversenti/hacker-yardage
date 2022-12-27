@@ -12,10 +12,10 @@ import os
 
 # Enter bounding box coordinates from OSM here:
 
-latmin = 30.2286     # minimum latitude
-lonmin = -97.7114    # minimum longitude
-latmax = 30.2448     # maximum latitude
-lonmax = -97.7018    # maximum longitude
+latmin = 47.6075     # minimum latitude
+lonmin = 8.5650    # minimum longitude
+latmax = 47.5987     # maximum latitude
+lonmax = 8.5856    # maximum longitude
 
 
 # do you want to replace existing output files? default is False

@@ -1,5 +1,5 @@
 from hyformulas import *
-
+from tkinter import * 
 import tkinter as tk
 import webbrowser
 
@@ -9,7 +9,7 @@ import time
 
 
 root = tk.Tk()
-root.title("Hacker Yardage")
+root.title("Yardage Book Generator")
 
 window = tk.Frame(master=root)
 window.pack(fill=tk.BOTH, expand=True)
@@ -29,6 +29,7 @@ frm_options.rowconfigure(0, weight=1, minsize=200)
 
 frm_button = tk.Frame(master=window, height=20)
 frm_button.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
 
 def callback(url): # for opening hyperlink
     webbrowser.open_new(url)
@@ -121,7 +122,7 @@ link1.bind("<Button-1>", lambda e: callback("https://www.buymeacoffee.com/elemen
 
 
 
-lbl_coords = tk.Label(master=frm_title, text="Enter the coordinates from OSM for your course:")
+lbl_coords = tk.Label(master=frm_title, text="Enter the coordinates from OSM for your course or select course from database:")
 lbl_coords.grid(row=0, column=0, sticky="w")
 
 
@@ -159,14 +160,14 @@ frm_coords.rowconfigure(2, weight=1, minsize=50)
 
 lbl_minlon = tk.Label(master=frm_minlon, text="West")
 ent_minlon = tk.Entry(master=frm_minlon)
-ent_minlon.insert(0, "-97.7114")
+ent_minlon.insert(0, "8.57080")
 
 lbl_minlon.pack()
 ent_minlon.pack()
 
 lbl_maxlat = tk.Label(master=frm_maxlat, text="North")
 ent_maxlat = tk.Entry(master=frm_maxlat)
-ent_maxlat.insert(0, "30.2448")
+ent_maxlat.insert(0, "47.60682")
 
 lbl_maxlat.pack()
 ent_maxlat.pack()
@@ -175,7 +176,7 @@ ent_maxlat.pack()
 
 lbl_minlat = tk.Label(master=frm_minlat, text="South")
 ent_minlat = tk.Entry(master=frm_minlat)
-ent_minlat.insert(0, "30.2286")
+ent_minlat.insert(0, "47.60292")
 
 lbl_minlat.pack()
 ent_minlat.pack()
@@ -184,7 +185,7 @@ ent_minlat.pack()
 
 lbl_maxlon = tk.Label(master=frm_maxlon, text="East")
 ent_maxlon = tk.Entry(master=frm_maxlon)
-ent_maxlon.insert(0, "-97.7018")
+ent_maxlon.insert(0, "8.57906")
 
 lbl_maxlon.pack()
 ent_maxlon.pack()
