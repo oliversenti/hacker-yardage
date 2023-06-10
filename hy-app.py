@@ -76,6 +76,7 @@ def run_program():
 
 
 	replace_existing = overwrite_var.get()
+	measure_in_meters = metersSetting.get() #print in either meters or yards (default)
 
 	small_width = ent_sm_scale.get()
 
@@ -160,14 +161,14 @@ frm_coords.rowconfigure(2, weight=1, minsize=50)
 
 lbl_minlon = tk.Label(master=frm_minlon, text="West")
 ent_minlon = tk.Entry(master=frm_minlon)
-ent_minlon.insert(0, "8.57080")
+ent_minlon.insert(0, "103.79119")
 
 lbl_minlon.pack()
 ent_minlon.pack()
 
 lbl_maxlat = tk.Label(master=frm_maxlat, text="North")
 ent_maxlat = tk.Entry(master=frm_maxlat)
-ent_maxlat.insert(0, "47.60682")
+ent_maxlat.insert(0, "1.34914")
 
 lbl_maxlat.pack()
 ent_maxlat.pack()
@@ -176,7 +177,7 @@ ent_maxlat.pack()
 
 lbl_minlat = tk.Label(master=frm_minlat, text="South")
 ent_minlat = tk.Entry(master=frm_minlat)
-ent_minlat.insert(0, "47.60292")
+ent_minlat.insert(0, "1.34328")
 
 lbl_minlat.pack()
 ent_minlat.pack()
@@ -185,7 +186,7 @@ ent_minlat.pack()
 
 lbl_maxlon = tk.Label(master=frm_maxlon, text="East")
 ent_maxlon = tk.Entry(master=frm_maxlon)
-ent_maxlon.insert(0, "8.57906")
+ent_maxlon.insert(0, "103.80034")
 
 lbl_maxlon.pack()
 ent_maxlon.pack()
@@ -204,9 +205,9 @@ lbl_colorslabel = tk.Label(master=frm_colorslabel, text="Customize colors:")
 lbl_colorslabel.pack()
 
 
-default_colors = {"Fairways":"#85D87E","Tee Boxes":"#85D87E",
-	"Greens":"#A1F29B","Background":"#2CA65E","Trees":"#1C6B3D",
-	"Water":"#BAFBEB","Sand":"#FFEEA1","Text & Labels":"#000000"}
+default_colors = {"Fairways":"#7A7A7D","Tee Boxes":"#85D87E",
+	"Greens":"#4B8552","Background":"#FFFFFF","Trees":"#99bfb0",
+	"Water":"#BAFBEB","Sand":"#EFE9BF","Text & Labels":"#000000"}
 
 color_entries = {}
 
@@ -273,9 +274,13 @@ ent_sm_scale.grid(row=0,column=1)
 frm_sm_scale.grid(row=2, column=1, padx=5, pady=5)
 
 overwrite_var = tk.IntVar()
+metersSetting = tk.IntVar()
 
 ent_overwrite = tk.Checkbutton(master=frm_others, text="Overwrite existing files?", variable=overwrite_var)
 ent_overwrite.grid(row=3,column=1,padx=5,pady=10)
+
+ent_meters = tk.Checkbutton(master=frm_others, text="Meters?", variable=metersSetting)
+ent_meters.grid(row=4,column=1,padx=5,pady=10)
 
 
 

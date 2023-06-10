@@ -8,6 +8,7 @@ from scipy.spatial import distance as dist
 import os
 
 from earthelevation import calcElevation
+from beziersvg import drawbeziersvg
 
 
 # convert hex to bgr format for numpy
@@ -93,7 +94,7 @@ def getLatDegreeDistance(bottom_lat, top_lat):
 	# this is the approximate distance of a degree of latitude at the equator in meters
 	lat_degree_distance_equator_meter = 111,111
 
-	# a degree of latitude gets approximately 13.56 yards longer per degree you go north
+	# a degree of latitude gets approximately 13.56 yards longer per degree you go north because earth is a geioid (shaped like an onion)
 	lat_yds_per_degree = 13.56
 
 	# find the average latitude of our course
@@ -204,7 +205,8 @@ def getHoleOSMData(way, lat_degree_distance, lon_degree_distance):
 def identifyGreen(hole_way_nodes, hole_result):
 
 	# if mapped correctly, the last coordinate should mark the center of the green in OSM
-	green_center = hole_way_nodes[-1] #-1 gets us the last node
+	green_center = hole_way_nodes[-1] #-1 gets us the last node, assuning it's in the middle of the green
+	#green_edge = hole_way_nodes[-1] #-1 gets us the last node, assuning it's at the front edge of the green (closest to the Tee)
 	print(hole_way_nodes, "this are the hole way nodes")
 	print(green_center, "this is the green center node")
 	print(green_center.lat, green_center.lon)
@@ -225,14 +227,18 @@ def identifyGreen(hole_way_nodes, hole_result):
 
 			green_nodes = way.get_nodes(resolve_missing=True)
 
-			green_min_lat, green_min_lon, green_max_lat, green_max_lon = getBoundingBoxLatLon(green_nodes)
+			green_min_lat, green_min_lon, green_max_lat, green_max_lon = getBoundingBoxLatLon(green_nodes) #check if last node of way is in the center of the green
+			
+			#checking if we found a green
+			print("we found a green:", green_nodes)
 
 			# checking if the center of the green for this hole is within this green
 
+            #if green_edge.lat > green_min_lat and green_center.lat < green_max_lat and green_center.lon > green_min_lon and green_center.lon < green_max_lon:
 			if green_center.lat > green_min_lat and green_center.lat < green_max_lat and green_center.lon > green_min_lon and green_center.lon < green_max_lon:
 
 				green_found = True
-				# print(way, green_nodes) prints way number of OSM -- for debugging only
+				print("these are the green way nodes", way, green_nodes) #prints way number of OSM -- for debugging only
 				return green_nodes
 
 	# if we couldn't find a green, return an error
@@ -380,6 +386,7 @@ def categorizeWays(hole_result, hole_minlat, hole_minlon, hole_maxlat, hole_maxl
 
 def drawFeature(image, array, color, line):
 	nds = np.int32([array]) # bug in fillPoly - needs explicit cast to 32bit
+	print("node 0", nds[0])
 	if line < 0:
 			cv2.fillPoly(image, nds, color)
 
@@ -387,6 +394,7 @@ def drawFeature(image, array, color, line):
 		# need to redraw a line since fillPoly has no line thickness options that I've found
 	    cv2.polylines(image, nds, True, color, line, lineType=cv2.LINE_AA)
 
+	   # drawbeziersvg(nds)        
 
 # for a list of arrays and an image, draw each array as a polygon on the image (in a given color)
 
@@ -1485,7 +1493,7 @@ def drawGreenDistancesAnyWaypoint(image, adjusted_hole_array, ypp, draw_dist, te
 
 			# print("Offset is:", offset)
 
-			cv2.ellipse(image,integer_green_center,(pixel_dist,pixel_dist),drawn_angle,-100,100,text_color,2)
+			cv2.ellipse(image,integer_green_center,(pixel_dist,pixel_dist),drawn_angle,-offset,offset,text_color,2)
 
 
 			draw_dist += 50
@@ -1918,11 +1926,11 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,filt
 
 		# finally, we can draw all of the features on our image (with specific colors for each)
 
-		drawFeatures(rotated_image, final_fairways, colors["fairways"], line=-1)
+		drawFeatures(rotated_image, final_fairways, colors["fairways"], line=1)
 		drawFeatures(rotated_image, final_tee_boxes, colors["tee boxes"], line=-1)
 		drawFeatures(rotated_image, final_water_hazards, colors["water"], line=-1)
 		drawFeatures(rotated_image, final_woods, colors["woods"], line=-1)
-		drawFeatures(rotated_image, final_green_array, colors["greens"], line=-1)
+		drawFeatures(rotated_image, final_green_array, colors["greens"], line=1)
 
 		# drawing the sand traps and trees last so they aren't overlapped by fairways, etc.
 		drawFeatures(rotated_image, final_sand_traps, colors["sand"], line=-1)
