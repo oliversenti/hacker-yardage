@@ -1,5 +1,25 @@
+Keppel Club Singapore:
+  maxlat: '1.3520'
+  maxlon: '103.8207'
+  minlat: '1.3274'
+  minlon: '103.8062'
 Laguna National Singapore:
-  maxlat: '1.3288'
-  maxlon: '103.9959'
-  minlat: '1.3041'
-  minlon: '103.9593'
+  maxlat: '1.3267'
+  maxlon: '103.9686'
+  minlat: '1.3217'
+  minlon: '103.9641'
+Palm Spring - Island Course:
+  maxlat: '1.19251'
+  maxlon: '104.09207'
+  minlat: '1.18241'
+  minlon: '104.08488'
+Palm Spring Batam - left:
+  maxlat: '1.188327'
+  maxlon: '104.081200'
+  minlat: '1.180936'
+  minlon: '104.074527'
+Seletar Country Club Singapore:
+  maxlat: '1.41609'
+  maxlon: '103.86754'
+  minlat: '1.40384'
+  minlon: '103.84923'

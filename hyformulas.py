@@ -204,23 +204,40 @@ def getHoleOSMData(way, lat_degree_distance, lon_degree_distance):
 
 def identifyGreen(hole_way_nodes, hole_result):
 
-	# if mapped correctly, the last coordinate should mark the center of the green in OSM
-	green_center = hole_way_nodes[-1] #-1 gets us the last node, assuning it's in the middle of the green
+	green_found = False
+	holeway_pointElv = []
+	lenght = len(hole_way_nodes)
+
+    #calcuate the elevation for each of the way points found in hole_way_nodes and add to holeway_pointElv array
+	for i in range(lenght):
+		elevationPoint = calcElevation (hole_way_nodes[i].lat, hole_way_nodes[i].lon)
+		holeway_pointElv.append(elevationPoint)
+		print("this is the number ", i, "holeway node elevation point :", holeway_pointElv)
+  
+	green_center = hole_way_nodes[-1] #-1 gets us the last node, assuning it's in the middle of the green and the hole way is drawn from T to Green
+  
+	"""# if mapped correctly, the last coordinate should mark the center of the green in OSM
+	
 	#green_edge = hole_way_nodes[-1] #-1 gets us the last node, assuning it's at the front edge of the green (closest to the Tee)
-	print(hole_way_nodes, "this are the hole way nodes")
-	print(green_center, "this is the green center node")
+	print(hole_way_nodes, "these are the hole way nodes")
+	print(green_center, "these is the green center node")
 	print(green_center.lat, green_center.lon)
 	
 	#get elevation from google elevation api
-	pointElv = calcElevation (green_center.lat, green_center.lon)
-	print(pointElv, "this is the elevation of the green center point")
+	green_pointElv = calcElevation (green_center.lat, green_center.lon)
+	print(green_pointElv, "this is the elevation of the green center point") """
 
-	# now search all the data we have for this hole, and filter to find golf greens only
+ 
+	
+	#get the Green Center Elevation and caculate relative hight difference from T to Green Center
+	relative_green_centerElevation = holeway_pointElv[-1] - holeway_pointElv[0]
+	print("this is the height difference from T to Green Center: ", round(relative_green_centerElevation,2))
+	
+ 
+ 	# now search all the data we have for this hole, and filter to find golf greens only
 	# check each one to see if it contains the center of the green for the hole we are on
 	# (we have to do this because sometimes the green from another hole might be close enough
 	# to the fairway to show up in our data pull)
-
-	green_found = False
 
 	for way in hole_result.ways:
 		if way.tags.get("golf", None) == "green":
@@ -228,12 +245,12 @@ def identifyGreen(hole_way_nodes, hole_result):
 			green_nodes = way.get_nodes(resolve_missing=True)
 
 			green_min_lat, green_min_lon, green_max_lat, green_max_lon = getBoundingBoxLatLon(green_nodes) #check if last node of way is in the center of the green
+			print("this is green_min_lat: ", green_min_lat, " this is green_max_lat: ", green_max_lat, " this is green_min_lon: ", green_min_lon, " this is green_max_lon: ", green_max_lon)
 			
 			#checking if we found a green
-			print("we found a green:", green_nodes)
+			print("we found a green:", way, green_nodes)
 
 			# checking if the center of the green for this hole is within this green
-
             #if green_edge.lat > green_min_lat and green_center.lat < green_max_lat and green_center.lon > green_min_lon and green_center.lon < green_max_lon:
 			if green_center.lat > green_min_lat and green_center.lat < green_max_lat and green_center.lon > green_min_lon and green_center.lon < green_max_lon:
 
@@ -1016,8 +1033,9 @@ def drawCarry(image, green_center, carrypoint, tee_box_points, ypp, text_size, t
 	yinc = int(32 * text_size)
 
 	# now for each distance found, write it on the image next to the marker
+    # sorts the distances for the marked T boxes in ascending order i.e. from the shortest to the longest. 
 
-	dist_list.sort()
+	dist_list.sort() 
 
 	for distance in dist_list:
 
@@ -1116,10 +1134,12 @@ def getLine(point1,point2):
 
 # given a list of features and a list of tee boxes, draw carry distances to all of the
 # features from each of the tee boxes
+#using pixel points not Lat/Long
 
 def drawCarryDistances(image, adjusted_hole_array, tee_box_list, carry_feature_list, ypp, text_size, text_color, filter_dist=40):
 
 	hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
+	
 
 	carry_points = getMaxPoints(carry_feature_list)
 
@@ -1783,7 +1803,7 @@ def getGreenGrid(b_w_image, adjusted_hole_array, ypp):
 	return padded_image
 
 
-def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,filter_width=50,short_factor=1,med_factor=1):
+def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chosen_tbox,filter_width=50,short_factor=1,med_factor=1):
 
 	# calculate distance in yards of one degree of latitude and one degree of longitude
 	lat_degree_distance = getLatDegreeDistance(latmin,latmax)

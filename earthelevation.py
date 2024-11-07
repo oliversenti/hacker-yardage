@@ -13,4 +13,4 @@ def calcElevation(lat,lon):
     json_response = requests.get(url).json()
     elevation = json_response['results'][0]['elevation']
     print("this is the elevation result from google earth:", elevation)
-    return round(elevation)
+    return round(elevation,2)
