@@ -1,0 +1,55 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.interpolate import splprep, splev
+
+# Sample waypoints (replace with your actual waypoints)
+waypoints = [(1.3244957, 103.9689049), (1.3244684, 103.9689045), (1.3244508, 103.9689068),
+             (1.3244360, 103.9689163), (1.3244210, 103.9689273), (1.3244129, 103.9689478),
+             (1.3244095, 103.9689685), (1.3244064, 103.9689864), (1.3243967, 103.9690116),
+             (1.3243909, 103.9690394), (1.3243860, 103.9690659), (1.3243859, 103.9690873),
+             (1.3243900, 103.9691108), (1.3244022, 103.9691279), (1.3244188, 103.9691381),
+             (1.3244383, 103.9691436), (1.3244570, 103.9691473), (1.3244796, 103.9691476),
+             (1.3245012, 103.9691438), (1.3245164, 103.9691367), (1.3245281, 103.9691292),
+             (1.3245418, 103.9691136), (1.3245511, 103.9690930), (1.3245579, 103.9690708),
+             (1.3245610, 103.9690448), (1.3245605, 103.9690182), (1.3245599, 103.9689939),
+             (1.3245575, 103.9689751), (1.3245539, 103.9689562), (1.3245487, 103.9689438),
+             (1.3245388, 103.9689281), (1.3245278, 103.9689134), (1.3245140, 103.9689068), [1.3244957, 103.9689049] ]
+
+# Convert to numpy array for easy manipulation
+waypoints_np = np.array(waypoints)
+
+# Use a smoothing spline to interpolate the boundary
+tck, u = splprep([waypoints_np[:, 0], waypoints_np[:, 1]], s=0.0000000001, per=1)#s=0 the spline will go exactly through all points, no smoothing. the higher the value the more the spline will deviate from the original points. 
+smooth_lat, smooth_lon = splev(np.linspace(0, 1, 1000), tck)
+print(smooth_lat, smooth_lon)
+
+# Plotting the smoothed boundary and grid
+plt.figure(figsize=(10, 10))
+plt.plot(smooth_lon, smooth_lat, '-', color='green', linewidth=2, label="Smoothed Boundary")
+# Plot the polygon boundary (closed loop)
+
+polygon_boundary = np.array(waypoints + [waypoints[0]])  # Closing the polygon
+#plt.plot(polygon_boundary[:, 1], polygon_boundary[:, 0], 'r-', linewidth=2, label='Green Boundary')
+
+# Set the grid spacing to 3 yards (assuming each degree represents a reasonable yard distance for illustration)
+grid_spacing = 3 / 111000  # Convert 3 yards to degrees for lat/lon
+
+# Create grid lines
+lat_min, lat_max = waypoints_np[:, 0].min() - grid_spacing, waypoints_np[:, 0].max() + grid_spacing
+lon_min, lon_max = waypoints_np[:, 1].min() - grid_spacing, waypoints_np[:, 1].max() + grid_spacing
+
+# Generate grid points for plotting
+lat_grid = np.arange(lat_min, lat_max, grid_spacing)
+lon_grid = np.arange(lon_min, lon_max, grid_spacing)
+
+# Draw the grid
+for lat in lat_grid:
+    plt.plot([lon_min, lon_max], [lat, lat], 'k--', linewidth=0.5)
+for lon in lon_grid:
+    plt.plot([lon, lon], [lat_min, lat_max], 'k--', linewidth=0.5)
+
+plt.xlabel('Longitude')
+plt.ylabel('Latitude')
+plt.legend()
+plt.title("Smoothed Boundary with 3-Yard Grid")
+plt.show()
