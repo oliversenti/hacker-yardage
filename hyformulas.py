@@ -7,6 +7,9 @@ import imutils
 from scipy.spatial import distance as dist
 import os
 
+from shapely.geometry import Point, Polygon
+from scipy.interpolate import splprep, splev
+
 from earthelevation import calcElevation
 from beziersvg import drawbeziersvg
 
@@ -402,14 +405,27 @@ def categorizeWays(hole_result, hole_minlat, hole_minlon, hole_maxlat, hole_maxl
 # also draw an outline if it is specified
 
 def drawFeature(image, array, color, line):
-	nds = np.int32([array]) # bug in fillPoly - needs explicit cast to 32bit
-	print("node 0", nds[0])
-	if line < 0:
-			cv2.fillPoly(image, nds, color)
-
-	if line > 0:
+    nds = np.array(array)
+    #nds = np.int32([array]) # bug in fillPoly - needs explicit cast to 32bit
+    print("node 0", nds[0])
+    tck, u = splprep([nds[:, 0], nds[:, 1]], s=0, per=1)
+    smooth_lat, smooth_lon = splev(np.linspace(0, 1, 100000), tck)
+    
+    smooth_points = np.vstack((smooth_lat, smooth_lon)).T  # Stack as Nx2 array
+    smooth_points = np.round(smooth_points).astype(int)    # Round and convert to integers
+    
+    # Ensure the points are in a shape cv2.polylines expects (list of arrays)
+    smooth_points = smooth_points.reshape((-1, 1, 2))
+    print("smoothing done")
+    
+    if line < 0:
+        cv2.fillPoly(image, [smooth_points], color)
+        
+    if line > 0:
+        print("drawing the line now")
 		# need to redraw a line since fillPoly has no line thickness options that I've found
-	    cv2.polylines(image, nds, True, color, line, lineType=cv2.LINE_AA)
+	    #cv2.polylines(image, nds, True, color, line, lineType=cv2.LINE_AA)
+        cv2.polylines(image, [smooth_points], True, color, line, lineType=cv2.LINE_AA)
 
 	   # drawbeziersvg(nds)        
 

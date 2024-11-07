@@ -3,22 +3,16 @@ import requests
 
 import matplotlib.pyplot as plt
 from shapely.geometry import Point, Polygon
+from scipy.interpolate import splprep, splev
 import matplotlib.tri as tri
 import time  # To add delays if needed to avoid rate limits
 
+from earthelevation import calcElevation
 import Constants  # Import your API key here
+
 
 # Fetching elevations and storing them
 key = Constants.API_KEY
-
-def calcElevation(lat, lon):
-    lat = str(lat)
-    lon = str(lon)
-    url = f"https://maps.googleapis.com/maps/api/elevation/json?locations={lat},{lon}&key={key}"
-    json_response = requests.get(url).json()
-    print(json_response)
-    elevation = json_response['results'][0]['elevation']
-    return round(elevation, 2)
 
 # Define the green boundary as a polygon with your provided waypoints (lat, lon).
 waypoints = [(1.3244957, 103.9689049), (1.3244684, 103.9689045), (1.3244508, 103.9689068),
@@ -33,6 +27,26 @@ waypoints = [(1.3244957, 103.9689049), (1.3244684, 103.9689045), (1.3244508, 103
              (1.3245575, 103.9689751), (1.3245539, 103.9689562), (1.3245487, 103.9689438),
              (1.3245388, 103.9689281), (1.3245278, 103.9689134), (1.3245140, 103.9689068)]
 polygon = Polygon(waypoints)
+
+# Convert to numpy array for easy manipulation
+waypoints_np = np.array(waypoints)
+
+# Use a smoothing spline to interpolate the boundary
+#s=0 the spline will go exactly through all points, no smoothing. the higher the value the more the spline will deviate from the original points. 
+""" By setting per=1, the spline is forced to wrap around, making the curve loop back to the start. 
+This is useful if you have a boundary or path that should be continuous (such as a polygon or a loop). """
+""" tck: This is the tuple containing the spline representation (knots, coefficients, and degree of the spline).
+u: This is a parameter array that represents the positions of the waypoints along the spline, typically in the range of 0 to 1. """
+
+tck, u = splprep([waypoints_np[:, 0], waypoints_np[:, 1]], s=1e-3, per=1)
+print("tck: ", tck)
+print("u: ", u)
+smooth_lat, smooth_lon = splev(np.linspace(0, 1, 1000), tck)
+
+# Plotting the smoothed boundary and grid
+plt.figure(figsize=(10, 10))
+plt.plot(smooth_lon, smooth_lat, '-', color='red', linewidth=2, label="Smoothed Boundary")
+# Plot the polygon boundary (closed loop)
 
 # Generate grid points spaced 3 yards apart within the bounding box of the polygon.
 grid_spacing = 0.000025  # Roughly 3 yards in lat/lon coordinates.
@@ -64,7 +78,7 @@ latitudes = grid_lat_lons[:, 0]
 longitudes = grid_lat_lons[:, 1]
 
 # Plotting the polygon (green boundary) and grid points with connecting lines
-plt.figure(figsize=(10, 8))
+#plt.figure(figsize=(10, 8))
 
 # Plot the polygon boundary (closed loop)
 polygon_boundary = np.array(waypoints + [waypoints[0]])  # Closing the polygon

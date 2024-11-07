@@ -1,6 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import splprep, splev
+from simplification.cutil import simplify_coords
+
+from earthelevation import calcElevation
+
 
 # Sample waypoints (replace with your actual waypoints)
 waypoints = [(1.3244957, 103.9689049), (1.3244684, 103.9689045), (1.3244508, 103.9689068),
@@ -15,16 +19,21 @@ waypoints = [(1.3244957, 103.9689049), (1.3244684, 103.9689045), (1.3244508, 103
              (1.3245575, 103.9689751), (1.3245539, 103.9689562), (1.3245487, 103.9689438),
              (1.3245388, 103.9689281), (1.3245278, 103.9689134), (1.3245140, 103.9689068), [1.3244957, 103.9689049] ]
 
+
 # Convert to numpy array for easy manipulation
 waypoints_np = np.array(waypoints)
+
+# Simplify waypoints with an epsilon value that reduces complexity but retains shape
+epsilon = 1e-6  # Adjust this to control simplification
+simplified_nds = simplify_coords(waypoints_np, epsilon)
 
 # Use a smoothing spline to interpolate the boundary
 #s=0 the spline will go exactly through all points, no smoothing. the higher the value the more the spline will deviate from the original points. 
 """ By setting per=1, the spline is forced to wrap around, making the curve loop back to the start. 
 This is useful if you have a boundary or path that should be continuous (such as a polygon or a loop). """
 
-tck, u = splprep([waypoints_np[:, 0], waypoints_np[:, 1]], s=0.0000000001, per=1)
-smooth_lat, smooth_lon = splev(np.linspace(0, 1, 1000), tck)
+tck, u = splprep([simplified_nds[:, 0], simplified_nds[:, 1]], s=0, per=1)
+smooth_lat, smooth_lon = splev(np.linspace(0, 1, 100000), tck)
 print(smooth_lat, smooth_lon)
 
 # Plotting the smoothed boundary and grid
