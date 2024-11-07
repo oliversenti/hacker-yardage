@@ -19,7 +19,11 @@ waypoints = [(1.3244957, 103.9689049), (1.3244684, 103.9689045), (1.3244508, 103
 waypoints_np = np.array(waypoints)
 
 # Use a smoothing spline to interpolate the boundary
-tck, u = splprep([waypoints_np[:, 0], waypoints_np[:, 1]], s=0.0000000001, per=1)#s=0 the spline will go exactly through all points, no smoothing. the higher the value the more the spline will deviate from the original points. 
+#s=0 the spline will go exactly through all points, no smoothing. the higher the value the more the spline will deviate from the original points. 
+""" By setting per=1, the spline is forced to wrap around, making the curve loop back to the start. 
+This is useful if you have a boundary or path that should be continuous (such as a polygon or a loop). """
+
+tck, u = splprep([waypoints_np[:, 0], waypoints_np[:, 1]], s=0.0000000001, per=1)
 smooth_lat, smooth_lon = splev(np.linspace(0, 1, 1000), tck)
 print(smooth_lat, smooth_lon)
 
@@ -29,7 +33,7 @@ plt.plot(smooth_lon, smooth_lat, '-', color='green', linewidth=2, label="Smoothe
 # Plot the polygon boundary (closed loop)
 
 polygon_boundary = np.array(waypoints + [waypoints[0]])  # Closing the polygon
-#plt.plot(polygon_boundary[:, 1], polygon_boundary[:, 0], 'r-', linewidth=2, label='Green Boundary')
+plt.plot(polygon_boundary[:, 1], polygon_boundary[:, 0], 'r-', linewidth=1, label='Green Boundary')
 
 # Set the grid spacing to 3 yards (assuming each degree represents a reasonable yard distance for illustration)
 grid_spacing = 3 / 111000  # Convert 3 yards to degrees for lat/lon
