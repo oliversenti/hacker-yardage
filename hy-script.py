@@ -34,6 +34,7 @@ tree_color = '#1c6b3d'
 water_color = '#bafbeb'
 sand_color = '#ffeea1'
 text_color = '#000000'
+image_bg_color = '#ffffff'
 
 
 

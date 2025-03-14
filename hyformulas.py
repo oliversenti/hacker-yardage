@@ -156,32 +156,32 @@ def getHoleBoundingBox(way, lat_degree_distance, lon_degree_distance):
 
 # create a blank image of the appropriate size to use in drawing the hole
 
-def generateImage(latmin, lonmin, latmax, lonmax, lat_degree_distance, lon_degree_distance, rough_color):
+def generateImage(latmin, lonmin, latmax, lonmax, lat_degree_distance, lon_degree_distance, image_bg_color):
 
 	lat_distance = (latmax - latmin) * lat_degree_distance
 	lon_distance = (lonmax - lonmin) * lon_degree_distance
-
-
+    
 	# set the scale of our images to be 3000 pixels for the longest distance (x or y)
 	# also define yards per pixel (ypp) and pixels per yard values to use in distance calculation
 
-	scale = 3000
+	y_scale = 2175
+	x_scale = 1350
 
 	if lat_distance >= lon_distance:
-		y_dim = scale
-		x_dim = int((lon_distance / lat_distance) * scale)
-		ypp = lat_distance / scale
+		y_dim = y_scale
+		x_dim = int((lon_distance / lat_distance) * x_scale)
+		ypp = lat_distance / y_scale
 	else:
-		x_dim = scale
-		y_dim = int((lat_distance / lon_distance) * scale)
-		ypp = lon_distance / scale
+		x_dim = x_scale
+		y_dim = int((lat_distance / lon_distance) * y_scale)
+		ypp = lon_distance / y_scale
 
 
 	im = np.zeros((x_dim, y_dim, 3), np.uint8)
 
 	# Fill image with background color
-
-	im[:] = rough_color
+     
+	im[:] = image_bg_color
 
 	# return the image and some other information for use in measurement
 
@@ -467,17 +467,17 @@ def drawTrees(image, feature_list, color):
 		left = (x - 50, y)
 		right = (x + 50, y)
 
-		cv2.line(image, left, right, color, thickness=6)
+		cv2.line(image, left, right, color, thickness=2)
 
 		tr = (x + int(50 * math.cos(math.pi/4)),y + int(50 * math.sin(math.pi/4)))
 		bl = (x + int(50 * math.cos(5*math.pi/4)),y + int(50 * math.sin(5*math.pi/4)))
 
-		cv2.line(image, tr, bl, color, thickness=6)
+		cv2.line(image, tr, bl, color, thickness=2)
 
 		tl = (x + int(50 * math.cos(3*math.pi/4)),y + int(50 * math.sin(3*math.pi/4)))
 		br = (x + int(50 * math.cos(7*math.pi/4)),y + int(50 * math.sin(7*math.pi/4)))
 
-		cv2.line(image, tl, br, color, thickness=6)
+		cv2.line(image, tl, br, color, thickness=2)
 
 
 # when the features were rotated, their coordinates could have been outside our image boundaries
@@ -906,7 +906,7 @@ def rotateArrayList(image,array_list,angle):
 # create a new image with appropriate dimensions to display
 # the hole running from bottom to top
 
-def getNewImage(image, angle, rough_color):
+def getNewImage(image, angle, image_bg_color):
 	(h, w) = image.shape[:2]
 
 	boundary_array = np.array([[0,0],[w,0],[0,h],[w,h]])
@@ -924,6 +924,7 @@ def getNewImage(image, angle, rough_color):
 		ymin = min(ymin,coord[1])
 		xmax = max(xmax,coord[0])
 		ymax = max(ymax,coord[1])
+		print("image background:", image_bg_color)
 
 	x_dim = int(xmax - xmin)
 	y_dim = int(ymax - ymin)
@@ -932,7 +933,7 @@ def getNewImage(image, angle, rough_color):
 
 	# Fill image with background color
 
-	new_image[:] = rough_color
+	new_image[:] = image_bg_color
 
 	return new_image, ymin, xmin, ymax, xmax
 
@@ -1818,6 +1819,50 @@ def getGreenGrid(b_w_image, adjusted_hole_array, ypp):
 
 	return padded_image
 
+def getFixedSizeImage(rotated_image, final_green_array, adjusted_hole_array, ypp, target_width=1275, target_height=2100):
+    # Create a blank white image with consistent dimensions
+    fixed_image = np.ones((target_height, target_width, 3), dtype=np.uint8) * 255
+    
+    # Get the bounding box of the green
+    g_minx = min(point[0] for array in final_green_array for point in array)
+    g_miny = min(point[1] for array in final_green_array for point in array)
+    g_maxx = max(point[0] for array in final_green_array for point in array)
+    g_maxy = max(point[1] for array in final_green_array for point in array)
+    
+    # Calculate green dimensions
+    green_width = g_maxx - g_minx
+    green_height = g_maxy - g_miny
+    
+    # Determine scale factor - we want the green to take up ~60% of the image width
+    # This ensures consistent scaling across all greens
+    target_green_width = target_width * 0.6
+    scale = target_green_width / max(green_width, 1)  # Avoid division by zero
+    
+    # Calculate offset to center the green
+    offset_x = int((target_width - green_width * scale) / 2 - g_minx * scale)
+    offset_y = int((target_height - green_height * scale) / 2 - g_miny * scale)
+    
+    # Transform all features to the new coordinate system
+    def transform_array_list(array_list):
+        transformed = []
+        for feature in array_list:
+            transformed_feature = []
+            for point in feature:
+                new_x = int(point[0] * scale + offset_x)
+                new_y = int(point[1] * scale + offset_y)
+                transformed_feature.append([new_x, new_y])
+            transformed.append(transformed_feature)
+        return transformed
+    
+    # Transform the green and hole arrays
+    fixed_green_array = transform_array_list(final_green_array)
+    fixed_hole_array = transform_array_list([adjusted_hole_array[0]])[0]
+    
+    # Calculate the new yards per pixel based on the scale
+    fixed_ypp = ypp / scale
+    
+    return fixed_image, fixed_green_array, fixed_hole_array, fixed_ypp
+
 
 def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chosen_tbox,filter_width=50,short_factor=1,med_factor=1):
 
@@ -1899,7 +1944,7 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 		hole_way_nodes, hole_result, hole_minlat, hole_minlon, hole_maxlat, hole_maxlon = getHoleOSMData(way, lat_degree_distance, lon_degree_distance)
 
 		# create a base image to use for this hole (and calculate yards per pixel)
-		image, x_dim, y_dim, ypp = generateImage(hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, lat_degree_distance, lon_degree_distance,colors["rough"])
+		image, x_dim, y_dim, ypp = generateImage(hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, lat_degree_distance, lon_degree_distance,colors["`rough`"])
 
 		# find this hole's green
 		green_nodes = identifyGreen(hole_way_nodes, hole_result)
@@ -1943,7 +1988,7 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 
 		# create a new, rotated base image to work with
-		rotated_image, ymin, xmin, ymax, xmax = getNewImage(image,angle,colors["rough"])
+		rotated_image, ymin, xmin, ymax, xmax = getNewImage(image,angle,colors["background"])
 
 
 		# we need to adjust all our rotated features
@@ -2138,7 +2183,7 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 
 		# time to make a new image
-		rotated_image, ymin, xmin, ymax, xmax = getNewImage(image,angle,colors["rough"])
+		rotated_image, ymin, xmin, ymax, xmax = getNewImage(image,angle,colors["background"])
 
 		final_fairways, fw_minx, fw_miny, fw_maxx, fw_maxy = adjustRotatedFeatures(filtered_fairways, ymin, xmin)
 		final_tee_boxes, tb_minx, tb_miny, tb_maxx, tb_maxy = adjustRotatedFeatures(filtered_tee_boxes, ymin, xmin)

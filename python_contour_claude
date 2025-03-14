@@ -1,0 +1,230 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LightSource
+from scipy.interpolate import griddata
+import matplotlib.patheffects as PathEffects
+from matplotlib import ticker
+import matplotlib.patches as mpatches
+
+def create_golf_contour_map(points_data, course_boundaries=None, hole_number=15, par=4, distance=329):
+    """
+    Create a contour map for a golf course hole with slope lines and ticks
+    to represent elevation changes, matching the style in the image.
+    
+    Parameters:
+    -----------
+    points_data : list of tuples
+        List of (lat, lon, elevation) points
+    course_boundaries : list of tuples, optional
+        List of (lat, lon) points defining the course boundaries
+    hole_number : int
+        The hole number to display
+    par : int
+        The par for the hole
+    distance : int
+        The distance of the hole in meters
+    """
+    # Extract data from points
+    lats = np.array([p[0] for p in points_data])
+    lons = np.array([p[1] for p in points_data])
+    elevations = np.array([p[2] for p in points_data])
+    
+    # Create a grid for interpolation
+    grid_x, grid_y = np.mgrid[
+        min(lons)-0.001:max(lons)+0.001:200j,
+        min(lats)-0.001:max(lats)+0.001:200j
+    ]
+    
+    # Interpolate elevation data onto the grid
+    grid_z = griddata((lons, lats), elevations, (grid_x, grid_y), method='cubic')
+    
+    # Set up the figure
+    fig, ax = plt.subplots(figsize=(10, 12))
+    
+    # Draw course boundaries if provided
+    if course_boundaries:
+        boundary_lons = [p[1] for p in course_boundaries]
+        boundary_lats = [p[0] for p in course_boundaries]
+        ax.plot(boundary_lons, boundary_lats, 'k-', linewidth=1.5)
+    
+    # Create a slope direction model
+    # Calculate gradients
+    dy, dx = np.gradient(grid_z)
+    slope = np.sqrt(dx**2 + dy**2)
+    aspect = np.arctan2(-dx, dy) * 180 / np.pi
+    
+    # Draw slope lines (like hachures) instead of contour lines
+    # This is more similar to what's shown in the golf course image
+    
+    # Determine slope line locations (subsample the grid)
+    step = 10  # Adjust this for more or fewer slope lines
+    x_indices = np.arange(0, grid_x.shape[0], step)
+    y_indices = np.arange(0, grid_x.shape[1], step)
+    
+    # Draw slope lines
+    slope_line_length = 0.001  # Adjust for longer/shorter slope indicators
+    for i in x_indices:
+        for j in y_indices:
+            # Skip points outside the boundaries or with NaN values
+            if np.isnan(grid_z[i, j]):
+                continue
+                
+            x, y = grid_x[i, j], grid_y[i, j]
+            
+            # Skip points outside a reasonable range (to avoid clutter)
+            if not (min(lons) <= x <= max(lons) and min(lats) <= y <= max(lats)):
+                continue
+            
+            # Calculate slope direction
+            angle_rad = np.arctan2(dy[i, j], dx[i, j])
+            
+            # Draw slope line perpendicular to gradient (along contour)
+            perp_angle = angle_rad + np.pi/2
+            x_perp = slope_line_length * np.cos(perp_angle)
+            y_perp = slope_line_length * np.sin(perp_angle)
+            
+            # Draw the slope line with tick marks pointing downhill
+            ax.plot([x - x_perp/2, x + x_perp/2], [y - y_perp/2, y + y_perp/2], 
+                   'r-', linewidth=0.8)
+            
+            # Add tick marks to indicate downhill direction (like in your image)
+            # The tick direction is determined by the gradient
+            tick_size = slope_line_length * 0.4
+            tick_angle = angle_rad  # This points in downhill direction
+            x_tick = tick_size * np.cos(tick_angle)
+            y_tick = tick_size * np.sin(tick_angle)
+            
+            # Add tick to center of the slope line
+            ax.plot([x, x + x_tick], [y, y + y_tick], 'r-', linewidth=0.8)
+    
+    # Draw hazards (water/bunkers) as light yellow patches
+    hazards = []
+    
+    # Define several hazard areas similar to those in the image
+    hazard_areas = [
+        [(34.055, -118.245), (34.056, -118.243), (34.054, -118.241)],  # Top right
+        [(34.025, -118.260), (34.027, -118.258), (34.026, -118.255)],  # Bottom left
+        [(34.048, -118.255), (34.050, -118.254), (34.049, -118.252)]   # Middle
+    ]
+    
+    for area in hazard_areas:
+        lons_hazard = [p[1] for p in area]
+        lats_hazard = [p[0] for p in area]
+        hazard = mpatches.Polygon(np.column_stack([lons_hazard, lats_hazard]), 
+                                  closed=True, 
+                                  facecolor='#e6e6a6', 
+                                  edgecolor='k', 
+                                  linewidth=0.5)
+        ax.add_patch(hazard)
+        hazards.append(hazard)
+    
+    # Draw points with elevation labels
+    for i, (lat, lon, elev) in enumerate(points_data):
+        # Black elevation labels
+        ax.text(lon, lat, f"{int(elev)}", color='black', fontsize=9, 
+                ha='center', va='bottom', weight='bold')
+        
+        # Red elevation labels
+        ax.text(lon, lat-0.0005, f"{int(elev)}", color='red', fontsize=9,
+                ha='center', va='top', weight='bold')
+        
+        # Draw point marker
+        if i % 3 == 0:  # Different markers for some points
+            ax.plot(lon, lat, 'o', color='yellow', markersize=6)
+        elif i % 5 == 0:
+            ax.plot(lon, lat, '^', color='orange', markersize=6)
+        else:
+            ax.plot(lon, lat, '.', color='black', markersize=4)
+    
+    # Add compass
+    compass_x, compass_y = min(lons) + 0.001, max(lats) - 0.001
+    ax.text(compass_x, compass_y, "N", fontsize=10, ha='center', va='bottom')
+    ax.text(compass_x, compass_y-0.001, "S", fontsize=10, ha='center', va='top')
+    ax.text(compass_x+0.0005, compass_y-0.0005, "E", fontsize=10, ha='left', va='center')
+    ax.text(compass_x-0.0005, compass_y-0.0005, "W", fontsize=10, ha='right', va='center')
+    
+    # Draw compass arrows
+    ax.arrow(compass_x, compass_y-0.0005, 0, 0.0005, head_width=0.0002, head_length=0.0002, fc='k', ec='k')
+    ax.arrow(compass_x, compass_y-0.0005, 0, -0.0005, head_width=0.0002, head_length=0.0002, fc='k', ec='k')
+    ax.arrow(compass_x, compass_y-0.0005, 0.0005, 0, head_width=0.0002, head_length=0.0002, fc='k', ec='k')
+    ax.arrow(compass_x, compass_y-0.0005, -0.0005, 0, head_width=0.0002, head_length=0.0002, fc='k', ec='k')
+    
+    # Add a second compass in the bottom right as shown in the image
+    compass2_x, compass2_y = max(lons) - 0.002, min(lats) + 0.002
+    # Similar compass style but smaller
+    ax.text(compass2_x, compass2_y, "N", fontsize=8, ha='center', va='bottom', color='red')
+    ax.text(compass2_x, compass2_y-0.0008, "S", fontsize=8, ha='center', va='top', color='red')
+    ax.text(compass2_x+0.0004, compass2_y-0.0004, "E", fontsize=8, ha='left', va='center', color='red')
+    ax.text(compass2_x-0.0004, compass2_y-0.0004, "W", fontsize=8, ha='right', va='center', color='red')
+    
+    # Add hole information
+    plt.figtext(0.1, 0.05, f"{hole_number}", fontsize=36, ha='left', weight='bold')
+    plt.figtext(0.25, 0.06, f"Par {par}\n{distance} meters", fontsize=14, ha='left')
+    
+    # Add elevation legend
+    legend_items = [
+        ('Elevation from Tee', 'black'),
+        ('0-1', 'yellow', 'o'),
+        ('>1', 'red', 'o'),
+        ('-3', 'orange', '^'),
+        ('>3', 'red', '^')
+    ]
+    
+    legend_x, legend_y = 0.7, 0.05
+    plt.figtext(legend_x, legend_y, legend_items[0][0], fontsize=10, ha='left', color=legend_items[0][1])
+    
+    for i, (text, color, marker) in enumerate(legend_items[1:]):
+        plt.figtext(legend_x + 0.05*i, legend_y-0.02, text, fontsize=8, ha='center', color='black')
+        ax.plot(min(lons) + 0.005 + 0.005*i, min(lats) + 0.001, marker, color=color, markersize=6, 
+                transform=ax.transData)
+    
+    # Remove tick labels and set aspect ratio
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_aspect('equal')
+    
+    # Add distance markers along the edges (simplified)
+    distance_markers = [(min(lons)-0.002, lats[len(lats)//3], '121'),
+                        (max(lons)+0.002, lats[len(lats)//2], '85'),
+                        (lons[len(lons)//4], min(lats)-0.002, '132'),
+                        (lons[len(lons)//2], max(lats)+0.002, '58')]
+    
+    for lon, lat, dist in distance_markers:
+        ax.text(lon, lat, dist, fontsize=8, ha='center', va='center', 
+                bbox=dict(facecolor='white', edgecolor='blue', boxstyle='round,pad=0.2'))
+    
+    plt.tight_layout()
+    return fig, ax
+
+# Example usage with sample data matching the image more closely
+if __name__ == "__main__":
+    # Generate data points similar to those in the golf course image
+    points_data = [
+        # Format: (lat, lon, elevation)
+        (34.060, -118.250, 272),  # Center points
+        (34.057, -118.248, 265),
+        (34.055, -118.245, 262),
+        (34.053, -118.250, 250),
+        (34.050, -118.250, 230),  # Middle
+        (34.049, -118.255, 228),
+        (34.045, -118.260, 215),
+        (34.047, -118.250, 209),
+        (34.046, -118.245, 210),
+        (34.042, -118.247, 202),
+        (34.040, -118.250, 193),  # Lower area
+        (34.035, -118.247, 188),
+        (34.032, -118.250, 159),
+    ]
+    
+    # Create course boundary
+    boundary_lats = [34.030, 34.030, 34.065, 34.065, 34.030]
+    boundary_lons = [-118.265, -118.240, -118.240, -118.265, -118.265]
+    boundaries = list(zip(boundary_lats, boundary_lons))
+    
+    # Create and show the contour map
+    fig, ax = create_golf_contour_map(points_data, boundaries)
+    plt.show()
+    
+    # Save the figure
+    fig.savefig('golf_slope_map.png', dpi=300, bbox_inches='tight')
+    print("Map saved as 'golf_slope_map.png'")

@@ -1,3 +1,8 @@
+Batam Hills:
+  maxlat: '1.06703'
+  maxlon: '103.96794'
+  minlat: '1.05349'
+  minlon: '103.94818'
 Keppel Club Singapore:
   maxlat: '1.3520'
   maxlon: '103.8207'
@@ -18,6 +23,11 @@ Palm Spring Batam - left:
   maxlon: '104.081200'
   minlat: '1.180936'
   minlon: '104.074527'
+Palm Spring Senai Malaysia:
+  maxlat: '1.66046'
+  maxlon: '103.66216'
+  minlat: '1.65081'
+  minlon: '103.65210'
 Seletar Country Club Singapore:
   maxlat: '1.41609'
   maxlon: '103.86754'
