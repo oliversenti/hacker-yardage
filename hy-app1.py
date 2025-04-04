@@ -82,7 +82,7 @@ def run_program():
             "fairways": hexToBGR(color_entries["Fairways"].get()),
             "tee boxes": hexToBGR(color_entries["Tee Boxes"].get()),
             "greens": hexToBGR(color_entries["Greens"].get()),
-            "rough": hexToBGR(color_entries["Background"].get()),
+            "background": hexToBGR(color_entries["Background"].get()),
             "trees": hexToBGR(color_entries["Trees"].get()),
             "water": hexToBGR(color_entries["Water"].get()),
             "sand": hexToBGR(color_entries["Sand"].get()),

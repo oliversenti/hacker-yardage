@@ -164,8 +164,8 @@ def generateImage(latmin, lonmin, latmax, lonmax, lat_degree_distance, lon_degre
 	# set the scale of our images to be 3000 pixels for the longest distance (x or y)
 	# also define yards per pixel (ypp) and pixels per yard values to use in distance calculation
 
-	y_scale = 2175
-	x_scale = 1350
+	y_scale = 3000
+	x_scale = 3000
 
 	if lat_distance >= lon_distance:
 		y_dim = y_scale
@@ -255,6 +255,7 @@ def identifyGreen(hole_way_nodes, hole_result):
 
 			# checking if the center of the green for this hole is within this green
             #if green_edge.lat > green_min_lat and green_center.lat < green_max_lat and green_center.lon > green_min_lon and green_center.lon < green_max_lon:
+			print("green center lat >: ", green_center.lat, "green min lat: ",green_min_lat, "green center max lat <: ", green_max_lat, "green center lon >: ", green_center.lon, "green min lon: ", green_min_lon, "green center lon <: ", green_center.lon, "green max lon: ", green_max_lon)
 			if green_center.lat > green_min_lat and green_center.lat < green_max_lat and green_center.lon > green_min_lon and green_center.lon < green_max_lon:
 
 				green_found = True
@@ -1944,7 +1945,7 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 		hole_way_nodes, hole_result, hole_minlat, hole_minlon, hole_maxlat, hole_maxlon = getHoleOSMData(way, lat_degree_distance, lon_degree_distance)
 
 		# create a base image to use for this hole (and calculate yards per pixel)
-		image, x_dim, y_dim, ypp = generateImage(hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, lat_degree_distance, lon_degree_distance,colors["`rough`"])
+		image, x_dim, y_dim, ypp = generateImage(hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, lat_degree_distance, lon_degree_distance,colors["background"])
 
 		# find this hole's green
 		green_nodes = identifyGreen(hole_way_nodes, hole_result)
