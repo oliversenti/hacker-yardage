@@ -1,3 +1,6 @@
+#to enable elevation calculation the get_green_grid_points function need to be called and calcElevation uncommented
+
+
 import overpy
 import numpy as np
 import cv2
@@ -5,6 +8,7 @@ import math
 import statistics
 import imutils
 from scipy.spatial import distance as dist
+from scipy.spatial import Delaunay
 import os
 
 from shapely.geometry import Point, Polygon
@@ -12,6 +16,15 @@ from scipy.interpolate import splprep, splev
 
 from earthelevation import calcElevation
 from beziersvg import drawbeziersvg
+
+#for elevation and slope direction plotting
+import matplotlib.pyplot as plt
+import matplotlib.tri as tri
+import matplotlib.tri as mtri
+
+# imports to use svg for feature drawing
+from scipy.interpolate import splprep, splev
+import svgwrite
 
 
 # convert hex to bgr format for numpy
@@ -24,8 +37,7 @@ def hexToBGR(hex):
 	g = int(hex[2:4], 16)
 	b = int(hex[4:6], 16)
 
-	return (b,g,r)
-
+	return (b, g, r)
 
 
 # given a list of coordinates, calculate the min and max longitude and latitude
@@ -46,7 +58,6 @@ def getBoundingBoxLatLon(nodes):
 	return minlat, minlon, maxlat, maxlon
 
 
-
 # function to get the golf holes contained within a given bounding box
 
 def getOSMGolfWays(bottom_lat, left_lon, top_lat, right_lon, printf=print):
@@ -54,13 +65,13 @@ def getOSMGolfWays(bottom_lat, left_lon, top_lat, right_lon, printf=print):
 	op = overpy.Overpass()
 
 	# create the coordinate string for our request - order is South, West, North, East
-	coord_string = str(bottom_lat) + "," + str(left_lon) + "," + str(top_lat) + "," + str(right_lon)
+	coord_string = str(bottom_lat) + "," + str(left_lon) + \
+	                   "," + str(top_lat) + "," + str(right_lon)
 
 	# use the coordinate string to pull the data through Overpass - golf holes only
 	try:
 		query = "(way['golf'='hole'](" + coord_string + "););out;"
 		return op.query(query)
-
 
 	except overpy.exception.OverPyException:
 		printf("OpenStreetMap servers are too busy right now.  Try running this tool later.")
@@ -68,17 +79,24 @@ def getOSMGolfWays(bottom_lat, left_lon, top_lat, right_lon, printf=print):
 
 # function to get all golf data contained within a given bounding box (e.g. fairways, greens, sand traps, etc)
 
+
 def getOSMGolfData(bottom_lat, left_lon, top_lat, right_lon, printf=print):
 
-	op = overpy.Overpass() # optional replacement url if servers are busy - url="https://overpass.kumi.systems/api/interpreter"
+	# optional replacement url if servers are busy - url="https://overpass.kumi.systems/api/interpreter"
+	op = overpy.Overpass()
 
 	# create the coordinate string for our request - order is South, West, North, East
-	coord_string = str(bottom_lat) + "," + str(left_lon) + "," + str(top_lat) + "," + str(right_lon)
+	coord_string = str(bottom_lat) + "," + str(left_lon) + \
+	                   "," + str(top_lat) + "," + str(right_lon)
 
 	# use the coordinate string to pull the data through Overpass
 	# we want all golf ways, with some additions for woods, trees, and water hazards
 	try:
-		query = "(way['golf'](" + coord_string + ");way['natural'='wood'](" + coord_string + ");node['natural'='tree'](" + coord_string + ");way['landuse'='forest'](" + coord_string + ");way['natural'='water'](" + coord_string + "););out;"
+		query = "(way['golf'](" + coord_string + ");way['natural'='wood'](" + coord_string + ");node['natural'='tree'](" + \
+		          coord_string + \
+		              ");way['landuse'='forest'](" + coord_string + \
+		                                         ");way['natural'='water'](" + \
+		                                                                   coord_string + "););out;"
 
 		return op.query(query)
 
@@ -95,7 +113,7 @@ def getLatDegreeDistance(bottom_lat, top_lat):
 	lat_degree_distance_equator = 120925.62
 
 	# this is the approximate distance of a degree of latitude at the equator in meters
-	lat_degree_distance_equator_meter = 111,111
+	lat_degree_distance_equator_meter = 111, 111
 
 	# a degree of latitude gets approximately 13.56 yards longer per degree you go north because earth is a geioid (shaped like an onion)
 	lat_yds_per_degree = 13.56
@@ -104,14 +122,16 @@ def getLatDegreeDistance(bottom_lat, top_lat):
 	average_lat = statistics.mean([bottom_lat, top_lat])
 
 	# calculate length of a degree of latitude is at this average latitude
-	lat_degree_distance_yds = lat_degree_distance_equator + (abs(average_lat) * lat_yds_per_degree)
+	lat_degree_distance_yds = lat_degree_distance_equator + \
+	    (abs(average_lat) * lat_yds_per_degree)
 
 	return lat_degree_distance_yds
 
 
 # calculate length of a degree of longitude at a given location
 
-def getLonDegreeDistance(bottom_lat, top_lat): # length of longitude depends on latitude because the Earth is a sphere!
+# length of longitude depends on latitude because the Earth is a sphere!
+def getLonDegreeDistance(bottom_lat, top_lat):
 
 	# this is the approximate distance of a degree of longitude at the equator in yards
 	lon_degree_distance_equator_yds = 69.172 * 5280 / 3
@@ -137,7 +157,8 @@ def getHoleBoundingBox(way, lat_degree_distance, lon_degree_distance):
 
 	hole_way_nodes = way.get_nodes(resolve_missing=True)
 
-	lowest_lat, lowest_lon, highest_lat, highest_lon = getBoundingBoxLatLon(hole_way_nodes)
+	lowest_lat, lowest_lon, highest_lat, highest_lon = getBoundingBoxLatLon(
+	    hole_way_nodes)
 
 	# add 50 yards in each direction to the bounding box (to include all features like sand traps, water, etc)
 
@@ -154,14 +175,14 @@ def getHoleBoundingBox(way, lat_degree_distance, lon_degree_distance):
 	return lowest_lat, lowest_lon, highest_lat, highest_lon, hole_way_nodes
 
 
-# create a blank image of the appropriate size to use in drawing the hole
+# create a blank dwg of the appropriate size to use in drawing the hole
 
-def generateImage(latmin, lonmin, latmax, lonmax, lat_degree_distance, lon_degree_distance, image_bg_color):
+""" def generatedwg(latmin, lonmin, latmax, lonmax, lat_degree_distance, lon_degree_distance, dwg_bg_color):
 
 	lat_distance = (latmax - latmin) * lat_degree_distance
 	lon_distance = (lonmax - lonmin) * lon_degree_distance
-    
-	# set the scale of our images to be 3000 pixels for the longest distance (x or y)
+
+	# set the scale of our dwgs to be 3000 pixels for the longest distance (x or y)
 	# also define yards per pixel (ypp) and pixels per yard values to use in distance calculation
 
 	y_scale = 3000
@@ -179,14 +200,49 @@ def generateImage(latmin, lonmin, latmax, lonmax, lat_degree_distance, lon_degre
 
 	im = np.zeros((x_dim, y_dim, 3), np.uint8)
 
-	# Fill image with background color
-     
-	im[:] = image_bg_color
+	# Fill dwg with background color
 
-	# return the image and some other information for use in measurement
+	im[:] = dwg_bg_color
+
+	# return the dwg and some other information for use in measurement
 
 	return im, x_dim, y_dim, ypp
+ """
 
+
+def rgb_to_hex(rgb_tuple):
+    return '#%02x%02x%02x' % rgb_tuple
+# svg document creation, instead of raster dwg
+
+# create a blank dwg of the appropriate size to use in drawing the hole
+
+def generateSVG(latmin, lonmin, latmax, lonmax, lat_degree_distance, lon_degree_distance, bg_color):
+    lat_distance = (latmax - latmin) * lat_degree_distance
+    lon_distance = (lonmax - lonmin) * lon_degree_distance
+
+    y_scale = 3000
+    x_scale = 3000
+
+    if lat_distance >= lon_distance:
+        y_dim = y_scale
+        x_dim = int((lon_distance / lat_distance) * x_scale)
+        ypp = lat_distance / y_scale
+    else:
+        x_dim = x_scale
+        y_dim = int((lat_distance / lon_distance) * y_scale)
+        ypp = lon_distance / y_scale
+
+     # Convert fill color if it's a tuple
+    if isinstance(bg_color, tuple):
+        bg_color = rgb_to_hex(bg_color)
+
+    # SVG dimensions in pixels (can be styled in px or user units)
+    dwg = svgwrite.Drawing(size=(x_dim, y_dim), viewBox=f"0 0 {x_dim} {y_dim}")
+    
+    # Add background rectangle
+    dwg.add(dwg.rect(insert=(0, 0), size=(x_dim, y_dim), fill="purple"))
+
+    return dwg, x_dim, y_dim, ypp
 
 # given a golf hole's waypoints, get all feature data from OSM for that hole (e.g. fairway, sand traps, water hazards, etc)
 
@@ -248,18 +304,19 @@ def identifyGreen(hole_way_nodes, hole_result):
 			green_nodes = way.get_nodes(resolve_missing=True)
 
 			green_min_lat, green_min_lon, green_max_lat, green_max_lon = getBoundingBoxLatLon(green_nodes) #check if last node of way is in the center of the green
-			print("this is green_min_lat: ", green_min_lat, " this is green_max_lat: ", green_max_lat, " this is green_min_lon: ", green_min_lon, " this is green_max_lon: ", green_max_lon)
+			#print("this is green_min_lat: ", green_min_lat, " this is green_max_lat: ", green_max_lat, " this is green_min_lon: ", green_min_lon, " this is green_max_lon: ", green_max_lon)
 			
 			#checking if we found a green
-			print("we found a green:", way, green_nodes)
+			print("we found a green")
+			# print("DEBUG]: we found a green:", way, green_nodes)
 
 			# checking if the center of the green for this hole is within this green
             #if green_edge.lat > green_min_lat and green_center.lat < green_max_lat and green_center.lon > green_min_lon and green_center.lon < green_max_lon:
-			print("green center lat >: ", green_center.lat, "green min lat: ",green_min_lat, "green center max lat <: ", green_max_lat, "green center lon >: ", green_center.lon, "green min lon: ", green_min_lon, "green center lon <: ", green_center.lon, "green max lon: ", green_max_lon)
+			#print("[DEBUG]: green center lat >: ", green_center.lat, "green min lat: ",green_min_lat, "green center max lat <: ", green_max_lat, "green center lon >: ", green_center.lon, "green min lon: ", green_min_lon, "green center lon <: ", green_center.lon, "green max lon: ", green_max_lon)
 			if green_center.lat > green_min_lat and green_center.lat < green_max_lat and green_center.lon > green_min_lon and green_center.lon < green_max_lon:
 
 				green_found = True
-				print("these are the green way nodes", way, green_nodes) #prints way number of OSM -- for debugging only
+				#print("DEBUG]: these are the green way nodes", way, green_nodes) #prints way number of OSM -- for debugging only
 				return green_nodes
 
 	# if we couldn't find a green, return an error
@@ -268,8 +325,54 @@ def identifyGreen(hole_way_nodes, hole_result):
 		print("Error: green could not be found")
 		return None
 
+	
+ #calcuate the lat/lon between green way nodes for elevation calcuation
+def get_green_grid_points(way_nodes, spacing_yards=3):
+    """
+    Generate a grid of lat/lon points spaced every 3 yards inside the green.
+    
+    Parameters:
+        way_nodes: List of (lat, lon) tuples forming the green boundary.
+        spacing_yards: Grid spacing in yards.
+        
+    Returns:
+        List of (lat, lon) tuples for each grid point inside the green.
+    """
+    # Convert to polygon
+    coords = [(node.lat, node.lon) for node in way_nodes]
+    green_polygon = Polygon(coords)
+    if not green_polygon.is_valid:
+        raise ValueError("Invalid polygon provided for green boundary.")
 
-# convert an OSM way to a numpy array we can use for image processing
+    # Convert yard spacing to degrees (approximate)
+    spacing_deg = spacing_yards / 1.0936 / 111000  # 1 deg ~ 111km
+
+    # Get bounding box
+    lats, lons = zip(*[(node.lat, node.lon) for node in way_nodes])
+    lat_min, lat_max = min(lats), max(lats)
+    lon_min, lon_max = min(lons), max(lons)
+    lat_min = float(lat_min) - (40 * spacing_deg)
+    lat_max = float(lat_max) + (40 * spacing_deg)
+    lon_min = float(lon_min) - (4 * spacing_deg)
+    lon_max = float(lon_max) + (4 * spacing_deg)
+
+    # Create grid
+    lat_grid = np.arange(lat_min, lat_max, spacing_deg)
+    lon_grid = np.arange(lon_min, lon_max, spacing_deg)
+
+    # Elevation map
+    elevation_map = {}
+
+    for lat in lat_grid:
+        for lon in lon_grid:
+            if green_polygon.contains(Point(lat, lon)):
+                elevation = calcElevation(lat, lon)
+                if elevation is not None:
+                    elevation_map[(lat, lon)] = elevation
+
+    return elevation_map
+
+# convert an OSM way to a numpy array we can use for dwg processing
 
 def translateWaytoNP(way, hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, x_dim, y_dim):
 	#
@@ -278,21 +381,21 @@ def translateWaytoNP(way, hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, x_
 
 	# convert each coordinate's location within the bounding box to a pixel location
 	# ex: if a coordinate is 70% of the way east and 30% of the way north in the bounding box,
-	# we want that point to be 70% from the left and 30% from the bottom of our image
+	# we want that point to be 70% from the left and 30% from the bottom of our dwg
 
 	nds = []
 	for node in way.get_nodes(resolve_missing=True):
 		yfactor = ((float(node.lat) - hole_minlat) / (hole_maxlat - hole_minlat)) * y_dim
 		xfactor = ((float(node.lon) - hole_minlon) / (hole_maxlon - hole_minlon)) * x_dim
 
-		# we need to round to integers for image processing
+		# we need to round to integers for dwg processing
 
 		column = int(xfactor)
 		row = int(yfactor)
 
 		nds.append((column, row))
 
-	# the script uses points and not image pixels, so flip the x and y
+	# the script uses points and not dwg pixels, so flip the x and y
 
 	nds = np.array(nds)
 	nds[:,[0, 1]] = nds[:,[1, 0]]
@@ -300,13 +403,13 @@ def translateWaytoNP(way, hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, x_
 	return nds
 
 
-# convert a list of coordinates to a numpy array we can use for image processing
+# convert a list of coordinates to a numpy array we can use for dwg processing
 
 def translateNodestoNP(nodes, hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, x_dim, y_dim):
 
 	# convert each coordinate's location within the bounding box to a pixel location
 	# ex: if a coordinate is 70% of the way east and 30% of the way north in the bounding box,
-	# we want that point to be 70% from the left and 30% from the bottom of our image
+	# we want that point to be 70% from the left and 30% from the bottom of our dwg
 
 	nds = []
 	for node in nodes:
@@ -314,14 +417,14 @@ def translateNodestoNP(nodes, hole_minlat, hole_minlon, hole_maxlat, hole_maxlon
 		xfactor = ((float(node.lon) - hole_minlon) / (hole_maxlon - hole_minlon)) * x_dim
 
 
-		# we need to round to integers for image processing
+		# we need to round to integers for dwg processing
 
 		column = int(xfactor)
 		row = int(yfactor)
 
 		nds.append((column, row))
 
-	# the script uses points and not image pixels, so flip the x and y
+	# the script uses points and not dwg pixels, so flip the x and y
 
 	nds = np.array(nds)
 	nds[:,[0, 1]] = nds[:,[1, 0]]
@@ -402,14 +505,17 @@ def categorizeWays(hole_result, hole_minlat, hole_minlon, hole_maxlat, hole_maxl
 	return sand_traps, tee_boxes, fairways, water_hazards, woods, trees
 
 
-# given a numpy array and an image, fill in the array as a polygon on the image (in a given color). Negative line thickness = filled polygon
+# given a numpy array and an dwg, fill in the array as a polygon on the dwg (in a given color). Negative line thickness = filled polygon
 # also draw an outline if it is specified
 
-def drawFeature(image, array, color, line):
+""" def drawFeature(dwg, array, color, line):
+    #upsize dwg for better quality
+    dwg = np.zeros((height * 4, width * 4, 3), dtype=np.uint8)
+    
     nds = np.array(array)
     #nds = np.int32([array]) # bug in fillPoly - needs explicit cast to 32bit
     print("node 0", nds[0])
-    tck, u = splprep([nds[:, 0], nds[:, 1]], s=0, per=1)
+    tck, u = splprep([nds[:, 0], nds[:, 1]], s=0.1, per=1)
     smooth_lat, smooth_lon = splev(np.linspace(0, 1, 100000), tck)
     
     smooth_points = np.vstack((smooth_lat, smooth_lon)).T  # Stack as Nx2 array
@@ -420,104 +526,215 @@ def drawFeature(image, array, color, line):
     print("smoothing done")
     
     if line < 0:
-        cv2.fillPoly(image, [smooth_points], color)
+        cv2.fillPoly(dwg, [smooth_points], color)
         
     if line > 0:
         print("drawing the line now")
 		# need to redraw a line since fillPoly has no line thickness options that I've found
-	    #cv2.polylines(image, nds, True, color, line, lineType=cv2.LINE_AA)
-        cv2.polylines(image, [smooth_points], True, color, line, lineType=cv2.LINE_AA)
+	    #cv2.polylines(dwg, nds, True, color, line, lineType=cv2.LINE_AA)
+        cv2.polylines(dwg, [smooth_points], True, color, line, lineType=cv2.LINE_AA)
 
-	   # drawbeziersvg(nds)        
+	#downsize dwg after drawing. 
+    dwg = cv2.resize(dwg, (width, height), interpolation=cv2.INTER_AREA) """
+     
 
-# for a list of arrays and an image, draw each array as a polygon on the image (in a given color)
+#draw features with SVG instead of openCV raster image. 
+def drawFeatureSVG(dwg, array, color, fill, line_width=1, smoothness=1.0, samples=1000):
+    # Convert the input array to numpy array
+    nds = np.array(array)
+    #print(f"[DEBUG]: Input array: {array}")  # Debugging line
+    stroke_color = darken_hex_color(color, factor=0.8)
+    
+    # Check if there are enough points
+    if len(nds) < 3:
+        print("Not enough points to create a feature.")  # Debugging line
+        return
+    
+    # Prepare the spline
+    tck, u = splprep([nds[:, 0], nds[:, 1]], s=smoothness, per=1)
+    #print(f"[DEBUG]: Spline preparation result: tck={tck}, u={u}")  # Debugging line
+    
+    # Evaluate the spline at samples intervals
+    smooth_x, smooth_y = splev(np.linspace(0, 1, samples), tck)
+    points = list(zip(smooth_x, smooth_y))
+    
+    # Debugging the smooth points
+    #print(f[DEBUG]: Generated points: {list(zip(smooth_x, smooth_y))[:5]}")  # Log first 5 points
+    
+    # Create the path for the feature
+    path_data = "M {} {}".format(points[0][0], points[0][1])
+    for x, y in points[1:]:
+        path_data += " L {},{}".format(x, y)
+    path_data += " Z"
+    #print(f"[DEBUG]: Path data: {path_data}")  # Debugging line
 
-def drawFeatures(image, feature_list, color, line):
+    # Create the path element
+    path = dwg.path(d=path_data, stroke=stroke_color, fill=color if fill else "none", stroke_width=line_width)
+    
+    # Add the path element to the SVG
+    dwg.add(path)
+    
+    # Print out the entire SVG content for inspection
+    #print("[DEBUG]: ", dwg.tostring())  # Log the full SVG content
 
+
+def darken_hex_color(hex_color, factor=0.85):
+    """
+    Returns a darker version of a given hex color.
+    Keeps it strictly hex — no RGB or named colors.
+    """
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) != 6:
+        raise ValueError(f"Invalid hex color: {hex_color}")
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+
+    r = max(0, int(r * factor))
+    g = max(0, int(g * factor))
+    b = max(0, int(b * factor))
+
+    return "#{:02x}{:02x}{:02x}".format(r, g, b)
+# for a list of arrays and an dwg, draw each array as a polygon on the dwg (in a given color)
+
+def drawFeatures(dwg, feature_list, color, line_width=1,feature_type=None):
+	print("calling drawFeaturesSVG", color)
 	for feature_nodes in feature_list:
-
-		drawFeature(image, feature_nodes, color, line)
-
-
-# for a list of tree nodes and an image, draw each tree on the image
-
-def drawTrees(image, feature_list, color):
-
-	print("tree feature list", feature_list)
-
-	for feature_nodes in feature_list:
-
-		nds = np.int32([feature_nodes])
-
-		# convert from numpy array back to a list of coordinates (not best-practice)
-		tree = nds.tolist()[0][0]
+		print("calling drawFeaturesSVG", color)
+  
+		#check if color = sand and if yes set fill to true
+		fill = feature_type in ["sand", "woods", "water"]
+   
+		drawFeatureSVG(dwg, feature_nodes, color, fill, line_width=1)
+  		
 
 
-		x = int(tree[0])
-		y = int(tree[1])
+# for a list of tree nodes and an dwg, draw each tree on the dwg
 
-		# draw a circle with an X inside as a tree symbol
+def wavy_tree_path(size, wave_count=8, inner=False):
+    """Generate a wavy circular path representing the tree canopy."""
+    r = size * 0.35 if not inner else size * 0.25
+    cx, cy = size / 2, size / 2
+    path = svgwrite.path.Path(fill="none", stroke_width=2)
 
-		cv2.circle(image, (x,y), 50, color, thickness=6)
+    angle_step = 2 * math.pi / wave_count
+    wave_amplitude = size * 0.05
+    rotate_offset = angle_step / 2 if inner else 0
 
-		top = (x,y - 50)
-		bottom = (x,y + 50)
+    # Move to start
+    x0 = cx + r * math.cos(rotate_offset)
+    y0 = cy + r * math.sin(rotate_offset)
+    path.push(f"M{x0:.2f},{y0:.2f}")
 
-		cv2.line(image, top, bottom, color, thickness=6)
+    for i in range(1, wave_count + 1):
+        angle1 = rotate_offset + (i - 1) * angle_step
+        angle2 = rotate_offset + i * angle_step
+        mid_angle = (angle1 + angle2) / 2
 
-		left = (x - 50, y)
-		right = (x + 50, y)
+        # Control point for wavy effect
+        control_x = cx + (r + wave_amplitude) * math.cos(mid_angle)
+        control_y = cy + (r + wave_amplitude) * math.sin(mid_angle)
+        x = cx + r * math.cos(angle2)
+        y = cy + r * math.sin(angle2)
 
-		cv2.line(image, left, right, color, thickness=2)
+        path.push(f"Q{control_x:.2f},{control_y:.2f} {x:.2f},{y:.2f}")
 
-		tr = (x + int(50 * math.cos(math.pi/4)),y + int(50 * math.sin(math.pi/4)))
-		bl = (x + int(50 * math.cos(5*math.pi/4)),y + int(50 * math.sin(5*math.pi/4)))
+    path.push("Z")
+    return path
 
-		cv2.line(image, tr, bl, color, thickness=2)
+def drawTrees(dwg, feature_list, stroke_color="#228B22"):  # Default color is a forest green
 
-		tl = (x + int(50 * math.cos(3*math.pi/4)),y + int(50 * math.sin(3*math.pi/4)))
-		br = (x + int(50 * math.cos(7*math.pi/4)),y + int(50 * math.sin(7*math.pi/4)))
+    #print("[DEBUG]: tree feature list", feature_list)
+    trunk_color="#6D4C41"
+    size=100
 
-		cv2.line(image, tl, br, color, thickness=2)
+    for feature_nodes in feature_list:
+        # Convert numpy feature array to coordinate
+        tree = np.int32([feature_nodes]).tolist()[0][0]
+        x, y = int(tree[0]), int(tree[1])
+        
+        # Create a group element for the tree
+        tree_group = svgwrite.container.Group()
+        
+        # Outer wavy canopy
+        outer_path = wavy_tree_path(size, wave_count=12)
+        outer_path.stroke(color=stroke_color)
+        tree_group.add(outer_path)
+        
+        # Inner rotated wavy layer
+        inner_path = wavy_tree_path(size, wave_count=10, inner=True)
+        inner_path.stroke(color=stroke_color, opacity=0.7)
+        tree_group.add(inner_path)
+        
+        # Trunk
+        trunk = svgwrite.shapes.Circle(
+			center=(size * 0.5, size * 0.5),
+			r=size * 0.03,
+			fill=trunk_color
+		)
+        
+        tree_group.add(trunk)
+        
+        #Add the central trunk circle (adjust position based on size)
+        trunk = dwg.circle(center=(size//2, size//2), r=size//33, fill=trunk_color)
+        
+
+         # Add to group
+        tree_group.add(outer_path)
+        tree_group.add(inner_path)
+        tree_group.add(trunk)
+        # Translate group to desired x,y (centered)
+        tree_group.translate(x - size // 2, y - size // 2)
+        
+        # Add elements to the drawing
+        dwg.add(tree_group)
 
 
-# when the features were rotated, their coordinates could have been outside our image boundaries
-# so we have to adjust them to be within the boundaries of our new image
+# when the features were rotated, their coordinates could have been outside our dwg boundaries
+# so we have to adjust them to be within the boundaries of our new dwg
 
 def adjustRotatedFeatures(feature_list, ymin, xmin):
+    minx = miny = 10000
+    maxx = maxy = -10000
 
-	minx = miny = 10000
-	maxx = maxy = -10000
+    output_list = []
 
-	output_list = []
+    for feature_nodes in feature_list:
+        print(f"Processing feature_nodes type: {type(feature_nodes)}")
 
-	for feature_nodes in feature_list:
+        if isinstance(feature_nodes, np.ndarray):
+            feature_nodes = feature_nodes.tolist()
+            #print(f"[]DEBUG]: onverted feature_nodes to list: {feature_nodes}")
 
-		w = np.zeros(feature_nodes.shape)
+        print(f"feature_nodes length: {len(feature_nodes)}")
 
-		# print("pre-translation:",feature_nodes)
+        feature_nodes = np.array(feature_nodes)
+        w = np.zeros((len(feature_nodes), 2), dtype=np.float64)  # 2D array
 
-		for i,v in enumerate(feature_nodes):
-			w[i] = v
+        #print(f"[DEBUG]: Before translation, feature_nodes: {feature_nodes}")
 
-			x = w[i,0]
-			y = w[i,1]
+        for i, v in enumerate(feature_nodes):
+            w[i] = v
+            x = w[i, 0]
+            y = w[i, 1]
 
-			newx = float(x) - xmin
-			newy = float(y) - ymin
+            newx = float(x) - xmin
+            newy = float(y) - ymin
+
+            w[i, 0] = newx
+            w[i, 1] = newy
+
+            minx = min(x, minx)
+            miny = min(y, miny)
+            maxx = max(x, maxx)
+            maxy = max(y, maxy)
+
+        #print(f"[DEBUG]:Processed feature_nodes: {w}")
+        output_list.append(w)
+
+    return output_list, minx, miny, maxx, maxy
 
 
-			w[i,0] = newx
-			w[i,1] = newy
-
-			minx = min(x, minx)
-			miny = min(y, miny)
-			maxx = max(x, maxx)
-			maxy = max(y, maxy)
-
-		output_list.append(w)
-
-	return output_list, minx, miny, maxx, maxy
 
 
 # take a properly rotated hole from OSM and create a bounding box around it
@@ -726,6 +943,8 @@ def filterArrayList(rotated_hole_array, feature_list, ypp, par, tee_box=0, fairw
 		# 		filtered_list.append(array)
 		# 	else:
 		# 		print("Array filtered out:", centroid)
+  
+		print("done with filtering array list")
 
 	return filtered_list
 
@@ -733,41 +952,35 @@ def filterArrayList(rotated_hole_array, feature_list, ypp, par, tee_box=0, fairw
 # calculate the angle from the center of the green to an arbitrary point
 
 def getAngle(green_center, other_point):
+    x = green_center[0]
+    y = green_center[1]
 
-	x = green_center[0]
-	y = green_center[1]
+    x2 = other_point[0]
+    y2 = other_point[1]
 
-	x2 = other_point[0]
-	y2 = other_point[1]
+    bigy = max(y, y2)
+    smally = min(y, y2)
 
+    numerator = bigy - smally
+    denominator = math.sqrt(((x2 - x) ** 2) + ((bigy - smally) ** 2))
 
-	bigy = max(y, y2)
-	smally = min(y, y2)
+    rads = math.acos((numerator / denominator))
+    angle = math.degrees(rads)
+    print("DEBUG: this is the original rotation angle in RAD found:", angle)
 
+    # adjust to get the appropriate angle for our use
+    if y > y2 and x > x2:
+        angle = 180 - angle
+    elif y > y2 and x < x2:
+        angle = 180 + angle
+    elif y < y2 and x < x2:
+        angle = 360 - angle
 
-	numerator = bigy - smally
-	denominator = math.sqrt(((x2-x)**2)+((bigy-smally)**2))
-
-	rads = math.acos((numerator/denominator))
-
-	angle = math.degrees(rads)
-
-	# adjust to get the appropriate angle for our use
-
-	if y > y2 and x > x2:
-		angle = 180 - angle
-	elif y > y2 and x < x2:
-		angle = 180 + angle
-	elif y < y2 and x < x2:
-		angle = 360 - angle
-	else:
-		angle=angle
-
-	return angle
+    return angle
 
 
 # given a list of the hole coordinates, figure out how much we need to
-# rotate our image in order to display the hole running from bottom to top
+# rotate our dwg in order to display the hole running from bottom to top
 
 def getRotateAngle(hole_way_nodes):
 
@@ -810,12 +1023,12 @@ def getRotateAngle(hole_way_nodes):
 		# print("green center is upper right of midpoint")
 		angle=angle
 
-	# print("Angle to be rotated is:", angle)
+	print("DEBUG: Angle to be rotated is:", angle)
 
 	return angle
 
 
-# given a list of the hole coordinates, figure out how much we need to rotate our image
+# given a list of the hole coordinates, figure out how much we need to rotate our dwg
 # to show the approach to the green running from the bottom to the top
 
 def getMidpointAngle(hole_way_nodes):
@@ -873,85 +1086,143 @@ def Rotate2D(pts,cnt,ang):
     	[-math.sin(ang),math.cos(ang)]]))+cnt
 
 
+def get_svg_dimensions(dwg):
+    width = int(str(dwg['width']).replace("px", ""))
+    height = int(str(dwg['height']).replace("px", ""))
+    return height, width
+
 # rotate an array (such as a sand trap) by the appropriate angle to show
 # the hole running from bottom to top
 
-def rotateArray(image, array, angle):
+""" def rotateArray(dwg, array, angle):
 
 	theta = np.radians(-angle)
 
-	(height, width) = image.shape[:2]
+	(height, width) = dwg.shape[:2]
 
 	ox = width // 2
 	oy = height // 2
 
 	center = np.array([ox, oy])
 
-	return Rotate2D(array,center,theta)
+	return Rotate2D(array,center,theta) """
+ 
+ 
+ #adapted for SVG
+ 
+def rotateArray(dwg, array, angle):
+    # Convert angle to radians (negated to match typical rotation convention)
+    theta = np.radians(-angle)
+    print("DEBUG: this is the rotate Array angle in RADn from function rotate array:", theta)
+
+    # Extract width and height from SVG drawing (removing 'px' and converting to int)
+    width = int(str(dwg['width']).replace("px", ""))
+    height = int(str(dwg['height']).replace("px", ""))
+
+    # Determine center point of the canvas
+    ox = width // 2
+    oy = height // 2
+    center = np.array([ox, oy])
+
+    # Rotate the array of points around the center
+    return Rotate2D(array, center, theta)
+
 
 
 # given a list of arrays for a certain hole, rotate each of them by a given angle
 
-def rotateArrayList(image,array_list,angle):
+def rotateArrayList(dwg,array_list,angle):
 
 	new_list = []
 
 	for array in array_list:
-		rotated_array = rotateArray(image, array, angle)
+		rotated_array = rotateArray(dwg, array, angle)
 		new_list.append(rotated_array)
 
 	return new_list
 
 
-# given an existing hole image and an angle to rotate it,
-# create a new image with appropriate dimensions to display
+# given an existing hole dwg and an angle to rotate it,
+# create a new dwg with appropriate dimensions to display
 # the hole running from bottom to top
 
-def getNewImage(image, angle, image_bg_color):
-	(h, w) = image.shape[:2]
 
-	boundary_array = np.array([[0,0],[w,0],[0,h],[w,h]])
+def getNewdwg(dwg, angle, dwg_bg_color):
+    # Extract dimensions from svgwrite.Drawing
+    w = int(float(str(dwg['width']).replace("px", "")))
+    h = int(float(str(dwg['height']).replace("px", "")))
 
-	result_array = rotateArray(image,boundary_array,angle)
+    # Define the original corners of the canvas
+    boundary_array = np.array([
+        [0, 0],
+        [w, 0],
+        [w, h],
+        [0, h]
+    ])
 
-	coord_list = result_array.tolist()
+    # Rotate the boundary corners
+    rotated_array = rotateArray(dwg, boundary_array, angle)
+    rotated_coords = rotated_array.tolist()
 
-	xmin = ymin = 10000
-	xmax = ymax = -10000
+    # Find new bounding box
+    xs, ys = zip(*rotated_coords)
+    xmin, xmax = min(xs), max(xs)
+    ymin, ymax = min(ys), max(ys)
+    x_dim = int(np.ceil(xmax - xmin))
+    y_dim = int(np.ceil(ymax - ymin))
 
-	for coord in coord_list:
+    # Create new drawing with expanded dimensions
+    new_dwg = svgwrite.Drawing(size=(f"{y_dim}px", f"{x_dim}px")) #swap for vertical orientation
 
-		xmin = min(xmin,coord[0])
-		ymin = min(ymin,coord[1])
-		xmax = max(xmax,coord[0])
-		ymax = max(ymax,coord[1])
-		print("image background:", image_bg_color)
+    # Simulate background color by drawing a filled rectangle
+    #new_dwg.add(new_dwg.rect(insert=(0, 0), size=(x_dim, y_dim), fill="pink"))#dwg_bg_color
 
-	x_dim = int(xmax - xmin)
-	y_dim = int(ymax - ymin)
-
-	new_image = np.zeros((y_dim, x_dim, 3), np.uint8)
-
-	# Fill image with background color
-
-	new_image[:] = image_bg_color
-
-	return new_image, ymin, xmin, ymax, xmax
+    return new_dwg, ymin, xmin, ymax, xmax
 
 
 # calculate the difstance between two pixels in yards (given a yards per pixel value)
 
 def getDistance(originpoint, destinationpoint, ypp):
+    """
+    Computes the distance between two 2D points and scales to yards.
+    Includes debugging output for tracing issues.
+    """
+    try:
+        #print(f"[DEBUG] Raw input -> origin: {originpoint}, dest: {destinationpoint}, ypp: {ypp}")
 
-	distance = dist.euclidean(originpoint, destinationpoint)
+        # Handle nested structures
+        if isinstance(originpoint[0], (list, tuple, np.ndarray)):
+            #print("[DEBUG] Unwrapping origin point")
+            originpoint = originpoint[0]
+        if isinstance(destinationpoint[0], (list, tuple, np.ndarray)):
+            #print("[DEBUG] Unwrapping destination point")
+            destinationpoint = destinationpoint[0]
 
-	distance_in_yards = distance * ypp
+        # Ensure proper format
+        if not (isinstance(originpoint, (list, tuple, np.ndarray)) and 
+                isinstance(destinationpoint, (list, tuple, np.ndarray))):
+            #print("[ERROR] One or both points are not list/tuple/ndarray")
+            return 0
 
-	return distance_in_yards
+        if len(originpoint) != 2 or len(destinationpoint) != 2:
+            #print(f"[ERROR] Incorrect point dimensions: origin {len(originpoint)}, dest {len(destinationpoint)}")
+            return 0
+
+        # Compute distance
+        distance = dist.euclidean(originpoint, destinationpoint)
+        distance_in_yards = distance * ypp
+        #print(f"[DEBUG] Distance (pixels): {distance}, in yards: {distance_in_yards}")
+
+        return distance_in_yards
+
+    except Exception as e:
+        print(f"[EXCEPTION] getDistance failed with: {e}")
+        return 0
+
 
 
 # for a list of features, get the point of each feature that is
-# closest to the top of the image
+# closest to the top of the dwg
 
 def getMaxPoints(feature_list):
 
@@ -971,7 +1242,7 @@ def getMaxPoints(feature_list):
 
 
 # for a list of features, get the point of each feature that is
-# furthest from the top of the image
+# furthest from the top of the dwg
 
 def getMinPoints(feature_list):
 
@@ -990,96 +1261,95 @@ def getMinPoints(feature_list):
 	return min_points
 
 
-# given a list of points, draw a dot on each point in our image
+# given a list of points, draw a dot on each point in our dwg
 
-def drawMarkerPoints(image, marker_point_list, text_size, text_color):
-
-	for point in marker_point_list:
-
-		cv2.circle(image, (int(point[0]),int(point[1])), int(6.5+text_size), text_color, thickness=-1)
-
+def drawMarkerPoints(dwg, tee_box_points, text_size, text_color):
+    # Loop through the points and draw circles using SVG methods
+    for point in tee_box_points:
+        # Draw a circle at each point
+        dwg.add(dwg.circle(
+            center=(int(point[0]), int(point[1])),  # Position of the circle
+            r=int(0.25*text_size),  # Radius of the circle, adjusted with text_size
+            fill=text_color  # Fill color
+        ))
 
 # given a point, draw in the carry distances to that point from the
 # back of each tee box (given in tee_box_points)
+# carry distance is measured from back of tee box
 
-def drawCarry(image, green_center, carrypoint, tee_box_points, ypp, text_size, text_color, right):
+def drawCarry(dwg, green_center, carrypoint, tee_box_points, ypp, text_size, text_color, right):
+    print("drawing carry distances")
+    text_weight = round(text_size * 2)
+    font_weight = "normal" if text_weight < 2 else "bold"  # default behavior
 
-	text_weight = round(text_size*2)
+    dist_list = []
 
-	dist_list = []
+    if len(tee_box_points) == 0:
+        print("error: no tee box points found for carries")
+        return 0
 
-	if len(tee_box_points) == 0:
-		print("error: no tee box points found for carries")
-		return 0
+    for tee in tee_box_points:
+        distance = int(getDistance(tee, carrypoint, ypp))
+        dist_list.append(distance)
 
-	for tee in tee_box_points:
-		distance = int(getDistance(tee,carrypoint,ypp))
-		dist_list.append(distance)
+    maxpoint_distance = max(dist_list)
 
-	maxpoint_distance = max(dist_list)
+    # we only want to draw carry distances that are actually helpful to see on the tee
+    # if it's too close or too far, ignore it
+    if maxpoint_distance < 185 or maxpoint_distance > 325:
+        # print("carry outside of our reasonable range")
+        return 0
 
-	# we only want to draw carry distances that are actually helpful to see on the tee
-	# if it's too close or too far, ignore it
+    # count the number of tees
+    tee_num = len(dist_list)
 
-	if maxpoint_distance < 185 or maxpoint_distance > 325:
-		# print("carry outside of our reasonable range")
-		return 0
+    # calculate the total label height
+    totalheight = (32 * (tee_num - 1) * text_size)
 
-	# count the number of tees
+    # declare x and y coordinates to place the text
+    if right:
+        x = int(carrypoint[0] + (0.8 * text_size))
+    else:
+        x = int(carrypoint[0] + (0.4 * text_size + 0.1))  # Adjusted to better center text
 
-	tee_num = len(dist_list)
+    y = int(carrypoint[1] - totalheight / 2 + 4)
 
-	# measure how big the label will be so we can center properly
+    # declare an increment for each new tee distance (so that they stack vertically)
+    yinc = int(32 * text_size)
 
-	(label_width, label_height), baseline = cv2.getTextSize(str(distance), cv2.FONT_HERSHEY_SIMPLEX,text_size, text_weight)
+    # sort the distances for the marked T boxes in ascending order i.e. from shortest to longest
+    dist_list.sort()
 
-	# calculate the total label height
+    # draw each distance as text on the SVG canvas
+    for distance in dist_list:
+        dwg.add(dwg.text(
+            str(distance),
+            insert=(x, y),
+            font_size=text_size, #text_size,
+            fill="red", #text_color,
+            font_weight=font_weight,
+            font_family="Arial"
+        ))
+        y += yinc
 
-	totalheight = (32 * (tee_num-1) * text_size)
+    # mark the carry point as a circle
+    dwg.add(dwg.circle(
+        center=(carrypoint[0], carrypoint[1]),
+        r=int(0.25*text_size),
+        fill=text_color
+    ))
 
-	# declare x and y coordinates to place the text
+    drawMarkerPoints(dwg, tee_box_points, text_size, text_color)
 
-	if right:
-		x = int(carrypoint[0] + (10 * (text_size + 0.1)) + 5)
-	else:
-		x = int(carrypoint[0] - (10 * (text_size + 0.1)) - label_width)
+    dtg = getDistance(green_center, carrypoint, ypp)
 
-	y = int(carrypoint[1] - totalheight/2 + 4 + baseline)
+    if dtg < 40 or maxpoint_distance < 215 or maxpoint_distance > 290:
+        # print("still need a carry to reasonable fairway point", dtg, maxpoint_distance)
+        return 0
+    else:
+        # print("confirmed reasonable carry")
+        return 1
 
-	# declare an increment for each new tee distance (so that they stack vertically)
-
-	yinc = int(32 * text_size)
-
-	# now for each distance found, write it on the image next to the marker
-    # sorts the distances for the marked T boxes in ascending order i.e. from the shortest to the longest. 
-
-	dist_list.sort() 
-
-	for distance in dist_list:
-
-		cv2.putText(image, str(distance), (x , y), cv2.FONT_HERSHEY_SIMPLEX, text_size, text_color, text_weight)
-
-		y += yinc
-
-	# mark where these distances are measuring
-
-	cv2.circle(image, (int(carrypoint[0]),int(carrypoint[1])), int(6.5+text_size), text_color, thickness=-1)
-
-	drawMarkerPoints(image, tee_box_points, text_size, text_color)
-
-	dtg = getDistance(green_center, carrypoint, ypp)
-
-	if dtg < 40 or maxpoint_distance < 215 or maxpoint_distance > 290:
-
-		# print("still need a carry to reasonable fairway point",dtg,maxpoint_distance)
-
-		return 0
-
-	else:
-
-		# print("confirmed reasonable carry")
-
-		return 1
 
 
 
@@ -1091,19 +1361,26 @@ def getMidpoint(ptA, ptB):
 # get a list of three waypoints for a  hole, even if there are only two or more than three
 
 def getThreeWaypoints(adjusted_hole_array):
-	hole_points = adjusted_hole_array[0].tolist()
+    # Check if the adjusted_hole_array is empty or not
+    if len(adjusted_hole_array) == 0:
+        print("Error: adjusted_hole_array is empty.")
+        return None, None, None  # Or handle the error as needed
+    
+    # If the array is not empty, proceed with accessing the first element
+    hole_points = adjusted_hole_array[0].tolist()
 
-	hole_origin = hole_points[0]
+    hole_origin = hole_points[0]
 
-	if len(hole_points) == 2:
-		midpoint = getMidpoint(hole_origin,hole_points[-1])
-	else:
-		midpoint = hole_points[1]
+    if len(hole_points) == 2:
+        midpoint = getMidpoint(hole_origin, hole_points[-1])
+    else:
+        midpoint = hole_points[1]
 
+    green_center = hole_points[-1]
+    
+    print("done with getting 3 way points")
 
-	green_center = hole_points[-1]
-
-	return hole_origin, midpoint, green_center
+    return hole_origin, midpoint, green_center
 
 
 # calculate the distance from a point to a line defined by two other points (line1 and line2)
@@ -1154,7 +1431,7 @@ def getLine(point1,point2):
 # features from each of the tee boxes
 #using pixel points not Lat/Long
 
-def drawCarryDistances(image, adjusted_hole_array, tee_box_list, carry_feature_list, ypp, text_size, text_color, filter_dist=40):
+def drawCarryDistances(dwg, adjusted_hole_array, tee_box_list, carry_feature_list, ypp, text_size, text_color, filter_dist=40):
 
 	hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
 	
@@ -1207,11 +1484,12 @@ def drawCarryDistances(image, adjusted_hole_array, tee_box_list, carry_feature_l
 			right = False
 
 		if right:
-			right_carries_drawn += drawCarry(image, green_center, carry, tee_box_points, ypp, text_size, text_color, right)
+			right_carries_drawn += drawCarry(dwg, green_center, carry, tee_box_points, ypp, text_size, text_color, right)
 			drawn_carries.append(carry)
 		else:
-			left_carries_drawn += drawCarry(image, green_center, carry, tee_box_points, ypp, text_size, text_color, right)
+			left_carries_drawn += drawCarry(dwg, green_center, carry, tee_box_points, ypp, text_size, text_color, right)
 			drawn_carries.append(carry)
+
 
 	return right_carries_drawn, left_carries_drawn
 
@@ -1220,7 +1498,7 @@ def drawCarryDistances(image, adjusted_hole_array, tee_box_list, carry_feature_l
 # no bunkers or other features of note
 # this way, players have a sense of how long the hole is, etc.
 
-def drawExtraCarries(image, adjusted_hole_array, tee_boxes, right_carries, left_carries, ypp, text_size, text_color):
+def drawExtraCarries(dwg, adjusted_hole_array, tee_boxes, right_carries, left_carries, ypp, text_size, text_color):
 
 	# if we already have enough carries, let's move on
 
@@ -1273,22 +1551,28 @@ def drawExtraCarries(image, adjusted_hole_array, tee_boxes, right_carries, left_
 
 		right = True
 
-	num = drawCarry(image, green_center, carry, tee_box_points, ypp, text_size, text_color, right)
+	num = drawCarry(dwg, green_center, carry, tee_box_points, ypp, text_size, text_color, right)
 
 
 
 # given a point and a distance, draw the distance next to the point
 
-def drawDistanceText(image, distance, point, text_size, text_color):
+def drawDistanceText(dwg, distance, point, text_size, text_color):
+    text_weight = "bold" if text_size >= 10 else "normal"  # You can adjust this logic
 
-	text_weight = round(text_size*2)
+    # Estimate label position similar to cv2.putText adjustment
+    x = int(point[0] + (0.8 * text_size))
+    y = int(point[1]+(0.4 *text_size))  # You can fine-tune the vertical offset
 
-	(label_width, label_height), baseline = cv2.getTextSize(str(distance), cv2.FONT_HERSHEY_SIMPLEX,text_size, text_weight)
-
-	x = int(point[0] - (0.5*label_width))
-	y = int(point[1] + 16 + (26 * text_size))
-
-	cv2.putText(image, str(distance), (x,y), cv2.FONT_HERSHEY_SIMPLEX, text_size, text_color, text_weight)
+    # Add text to the SVG drawing
+    dwg.add(dwg.text(
+        str(distance),
+        insert=(x, y),
+        font_size=f"{text_size}px",
+        fill=text_color,
+        font_weight=text_weight,
+        font_family="Arial"
+    ))
 
 
 # complicated - we are drawing arcs at 50, 100, 150, 200 yards, etc.
@@ -1340,234 +1624,243 @@ def getPointOnOtherLine(origin_point, midpoint, green_center, distance, ypp):
 		return (int(x_int), int(y_int))
 
 
+def draw_ellipse_arc(dwg, center, radius, start_angle, end_angle, angle, color, stroke_width):
+    import math
+
+    def rotate_point(px, py, cx, cy, angle_deg):
+        angle_rad = math.radians(angle_deg)
+        dx, dy = px - cx, py - cy
+        qx = cx + dx * math.cos(angle_rad) - dy * math.sin(angle_rad)
+        qy = cy + dx * math.sin(angle_rad) + dy * math.cos(angle_rad)
+        return qx, qy
+
+    x, y = center
+    rx, ry = radius, radius
+
+    # Convert degrees to radians
+    start_rad = math.radians(start_angle)
+    end_rad = math.radians(end_angle)
+
+    # Start and end points before rotation
+    x_start = x + rx * math.cos(start_rad)
+    y_start = y - ry * math.sin(start_rad)
+    x_end = x + rx * math.cos(end_rad)
+    y_end = y - ry * math.sin(end_rad)
+
+    # Rotate points 90 degrees
+    x_start, y_start = rotate_point(x_start, y_start, x, y, angle+90)
+    x_end, y_end = rotate_point(x_end, y_end, x, y, angle+90)
+
+    # Flip direction: swap angles and adjust flags
+    large_arc = int(abs(end_angle - start_angle) > 180)
+    sweep_flag = 0 if end_angle > start_angle else 1  # flipped sweep
+
+    # Path data
+    path_data = f"M {x_start},{y_start} A {rx},{ry} 0 {large_arc},{sweep_flag} {x_end},{y_end}"
+    dwg.add(dwg.path(
+        d=path_data,
+        fill="none",
+        stroke=color,
+        stroke_width=stroke_width
+    ))
+
+
+
 # draw arcs down the fairway at 50-yard intervals from the center of the green
 
-def drawFarGreenDistances(image, adjusted_hole_array, ypp, draw_dist, text_size, text_color):
+def drawFarGreenDistances(dwg, adjusted_hole_array, ypp, draw_dist, text_size, text_color):
+    import math
+    from scipy.spatial import distance as dist
 
-	angle_dict = {50:30,100:15.2,150:9.8,200:7.5,250:6,300:5,350:4.6}
+    angle_dict = {50: 30, 100: 15.2, 150: 9.8, 200: 7.5, 250: 6, 300: 5, 350: 4.6}
 
-	hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
+    hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
+    integer_green_center = (int(green_center[0]), int(green_center[1]))
 
-	integer_green_center = (int(green_center[0]),int(green_center[1]))
+    # Calculate distances
+    d1 = dist.euclidean(hole_origin, midpoint)
+    d2 = dist.euclidean(midpoint, green_center)
+    midpoint_dist = d2 * ypp
+    total_dist = (d1 + d2) * ypp
 
-	hole_length_limit = ((dist.euclidean(hole_origin,midpoint) + dist.euclidean(midpoint,green_center)) * ypp) - 200
+    # Set hole length limits
+    hole_length_limit = max(midpoint_dist, min(350, total_dist - 80, total_dist))
 
-	hole_length_limit = max(hole_length_limit, ((dist.euclidean(hole_origin,midpoint) + dist.euclidean(midpoint,green_center)) * ypp)*0.6)
+    print(f"[DEBUG] midpoint_dist: {midpoint_dist:.2f}, hole_length_limit: {hole_length_limit:.2f}, starting draw_dist: {draw_dist}")
 
-	midpoint_dist = dist.euclidean(green_center,midpoint) * ypp
+    while draw_dist < hole_length_limit:
+        if draw_dist < midpoint_dist:
+            drawpoint = getPointOnOtherLine(midpoint, green_center, green_center, draw_dist, ypp)
+        else:
+            drawpoint = getPointOnOtherLine(hole_origin, midpoint, green_center, draw_dist, ypp)
 
-	hole_length_limit = max(midpoint_dist, hole_length_limit)
+        #print(f"[DEBUG] Drawing distance {draw_dist} yards at point {drawpoint}")
 
-	hole_length_limit = min(350,hole_length_limit)
+        drawDistanceText(dwg, draw_dist, drawpoint, text_size, text_color)
 
-	# hole_length_limit = 301
+        pixel_dist = int(draw_dist / ypp)
+        angle = getAngle(green_center, drawpoint)
+        offset = angle_dict.get(draw_dist, 10)  # Fallback angle
 
-	while draw_dist < midpoint_dist:
+        #print(f"[DEBUG] Pixel radius: {pixel_dist}, angle: {angle:.2f}, drawn_angle: {drawn_angle:.2f}, offset: {offset}")
 
-		drawpoint = getPointOnOtherLine(midpoint, green_center, green_center, draw_dist, ypp)
+        # SVG rotation via transform (if needed)
+        stroke_width=2
+        draw_ellipse_arc(dwg, integer_green_center, pixel_dist, -offset, offset, angle, text_color, stroke_width)
+        """ dwg.add(dwg.ellipse(
+            center=integer_green_center,
+            r=(pixel_dist, pixel_dist),
+            fill='none',
+            stroke=text_color,
+            stroke_width=2,
+            transform=f"rotate({drawn_angle} {integer_green_center[0]} {integer_green_center[1]})"
+        )) """
 
-
-		drawDistanceText(image, draw_dist, drawpoint, text_size, text_color)
-
-
-		pixel_dist = int(draw_dist/ypp)
-
-		angle = getAngle(green_center,drawpoint)
-
-		# print("Arc angle is:",angle)
-
-		drawn_angle = angle + 90
-
-
-		offset = angle_dict[draw_dist]
-
-		# print("Offset is:", offset)
-
-		cv2.ellipse(image,integer_green_center,(pixel_dist,pixel_dist),drawn_angle,-offset,offset,text_color,2)
-
-		draw_dist += 50
-
-
-	# once the distance we are drawing is farther than the distance to the hole's
-	# midpoint, we have to switch to drawing on the line between the origin and the
-	# midpoint
-
-	while draw_dist < hole_length_limit:
-
-		drawpoint = getPointOnOtherLine(hole_origin, midpoint, green_center, draw_dist, ypp)
-
-		drawDistanceText(image, draw_dist, drawpoint, text_size, text_color)
-
-		pixel_dist = int(draw_dist/ypp)
-
-		angle = getAngle(green_center,drawpoint)
-
-		drawn_angle = angle + 90
+        draw_dist += 50
 
 
-		offset = angle_dict[draw_dist]
-
-		cv2.ellipse(image,integer_green_center,(pixel_dist,pixel_dist),drawn_angle,-offset,offset,text_color,2)
-
-
-		draw_dist += 50
 
 
 # special case to handle holes with four waypoints (double doglegs)
-
-def drawGreenDistancesAnyWaypoint(image, adjusted_hole_array, ypp, draw_dist, text_size, text_color):
-
-	hole_points = adjusted_hole_array[0].tolist()
-
-	if len(hole_points) < 4:
-
-		# if there are 3 or fewer waypoints, we can use the old method
-
-		drawFarGreenDistances(image, adjusted_hole_array, ypp, draw_dist, text_size, text_color)
-
-		return True
-
-	elif len(hole_points) == 4:
-
-		# print("found four hole waypoints - using new method")
-
-		angle_dict = {50:30,100:15.2,150:9.8,200:7.5,250:6,300:5,350:4.6}
-
-		hole_origin = hole_points[0]
-
-		green_center = hole_points[-1]
-
-		integer_green_center = (int(green_center[0]),int(green_center[1]))
-
-		first_midpoint = hole_points[1]
-
-		second_midpoint = hole_points[2]
-
-		hole_length_limit = ((dist.euclidean(hole_origin,first_midpoint) +
-			dist.euclidean(first_midpoint, second_midpoint) +
-			dist.euclidean(second_midpoint,green_center)) * ypp) - 200
-
-		hole_length_limit = max(hole_length_limit,
-			((dist.euclidean(hole_origin,first_midpoint) +
-				dist.euclidean(first_midpoint, second_midpoint) +
-				dist.euclidean(second_midpoint,green_center)) * ypp)*0.6)
-
-		second_midpoint_dist = dist.euclidean(green_center,second_midpoint) * ypp
-
-		first_midpoint_dist = dist.euclidean(green_center,first_midpoint) * ypp
-
-		hole_length_limit = max(first_midpoint_dist, hole_length_limit)
-
-		hole_length_limit = min(350,hole_length_limit)
-
-		while draw_dist < second_midpoint_dist:
-
-			drawpoint = getPointOnOtherLine(second_midpoint, green_center, green_center, draw_dist, ypp)
-
-
-			drawDistanceText(image, draw_dist, drawpoint, text_size, text_color)
-
-
-			pixel_dist = int(draw_dist/ypp)
-
-			angle = getAngle(green_center,drawpoint)
-
-			# print("Arc angle is:",angle)
-
-			drawn_angle = angle + 90
-
-
-			offset = angle_dict[draw_dist]
-
-			# print("Offset is:", offset)
-
-			cv2.ellipse(image,integer_green_center,(pixel_dist,pixel_dist),drawn_angle,-offset,offset,text_color,2)
-
-			draw_dist += 50
-
-
-		while draw_dist < first_midpoint_dist:
-
-			drawpoint = getPointOnOtherLine(first_midpoint, second_midpoint, green_center, draw_dist, ypp)
-
-
-			drawDistanceText(image, draw_dist, drawpoint, text_size, text_color)
-
-
-			pixel_dist = int(draw_dist/ypp)
-
-			angle = getAngle(green_center,drawpoint)
-
-			# print("Arc angle is:",angle)
-
-			drawn_angle = angle + 90
-
-
-			offset = angle_dict[draw_dist]
-
-			# print("Offset is:", offset)
-
-			cv2.ellipse(image,integer_green_center,(pixel_dist,pixel_dist),drawn_angle,-offset,offset,text_color,2)
-
-			draw_dist += 50
-
-
-		while draw_dist < hole_length_limit:
-
-			drawpoint = getPointOnOtherLine(hole_origin, first_midpoint, green_center, draw_dist, ypp)
-
-			drawDistanceText(image, draw_dist, drawpoint, text_size, text_color)
-
-			pixel_dist = int(draw_dist/ypp)
-
-			angle = getAngle(green_center,drawpoint)
-
-			# print("Arc angle is:",angle)
-
-			drawn_angle = angle + 90
-
-
-			offset = angle_dict[draw_dist]
-
-			# print("Offset is:", offset)
-
-			cv2.ellipse(image,integer_green_center,(pixel_dist,pixel_dist),drawn_angle,-offset,offset,text_color,2)
-
-
-			draw_dist += 50
-
-	else:
-		print("error: more than 4 hole waypoints found")
-		return None
-
+def drawGreenDistancesAnyWaypoint(dwg, adjusted_hole_array, ypp, draw_dist, text_size, text_color):
+    hole_points = adjusted_hole_array[0].tolist()
+
+    if len(hole_points) < 4:
+        print("Using fallback method: fewer than 4 waypoints")
+        drawFarGreenDistances(dwg, adjusted_hole_array, ypp, draw_dist, text_size, text_color)
+        return True
+
+    if len(hole_points) != 4:
+        print(f"Error: Unexpected number of hole waypoints: {len(hole_points)}")
+        return False
+
+    # Define angle dictionary and fallback function
+    angle_dict = {50: 30, 100: 15.2, 150: 9.8, 200: 7.5, 250: 6, 300: 5, 350: 4.6}
+    def get_closest_angle(dist_value):
+        keys = sorted(angle_dict.keys())
+        return angle_dict[min(keys, key=lambda k: abs(k - dist_value))]
+
+    hole_origin = hole_points[0]
+    first_midpoint = hole_points[1]
+    second_midpoint = hole_points[2]
+    green_center = hole_points[3]
+    integer_green_center = (int(green_center[0]), int(green_center[1]))
+
+    # Calculate distances in yards
+    seg_lengths = [
+        dist.euclidean(hole_origin, first_midpoint),
+        dist.euclidean(first_midpoint, second_midpoint),
+        dist.euclidean(second_midpoint, green_center)
+    ]
+    total_pixel_length = sum(seg_lengths)
+    total_yard_length = total_pixel_length * ypp
+
+    # Compute hole length limit
+    hole_length_limit = max(total_yard_length - 200, total_yard_length * 0.6)
+    hole_length_limit = min(hole_length_limit, 350)
+
+    second_mp_dist = dist.euclidean(green_center, second_midpoint) * ypp
+    first_mp_dist = dist.euclidean(green_center, first_midpoint) * ypp
+    hole_length_limit = max(first_mp_dist, hole_length_limit)
+
+    
+    print(f"Starting draw_dist: {draw_dist}, going up to {hole_length_limit:.2f} yards")
+
+    # Draw from green to second midpoint
+    while draw_dist < second_mp_dist:
+        drawpoint = getPointOnOtherLine(second_midpoint, green_center, green_center, draw_dist, ypp)
+        if drawpoint is None:
+            print(f"Warning: drawpoint is None at {draw_dist} yards (segment: GC–2MP)")
+            draw_dist += 50
+            continue
+
+        drawDistanceText(dwg, draw_dist, drawpoint, text_size, text_color)
+        pixel_dist = int(draw_dist / ypp)
+        angle = getAngle(green_center, drawpoint)
+        offset = get_closest_angle(draw_dist)
+        stroke_width=2
+        draw_ellipse_arc(dwg, integer_green_center, pixel_dist, -offset, offset, angle, text_color, stroke_width)
+        draw_dist += 50
+
+    # Draw from second midpoint to first midpoint
+    while draw_dist < first_mp_dist:
+        drawpoint = getPointOnOtherLine(first_midpoint, second_midpoint, green_center, draw_dist, ypp)
+        if drawpoint is None:
+            print(f"Warning: drawpoint is None at {draw_dist} yards (segment: 2MP–1MP)")
+            draw_dist += 50
+            continue
+
+        drawDistanceText(dwg, draw_dist, drawpoint, text_size, text_color)
+        pixel_dist = int(draw_dist / ypp)
+        angle = getAngle(green_center, drawpoint)
+        offset = get_closest_angle(draw_dist)
+        draw_ellipse_arc(dwg, integer_green_center, pixel_dist, -offset, offset, angle, text_color, stroke_width)
+        draw_dist += 50
+
+    # Draw from first midpoint to tee
+    while draw_dist < hole_length_limit:
+        drawpoint = getPointOnOtherLine(hole_origin, first_midpoint, green_center, draw_dist, ypp)
+        if drawpoint is None:
+            print(f"Warning: drawpoint is None at {draw_dist} yards (segment: 1MP–Tee)")
+            draw_dist += 50
+            continue
+
+        drawDistanceText(dwg, draw_dist, drawpoint, text_size, text_color)
+        pixel_dist = int(draw_dist / ypp)
+        angle = getAngle(green_center, drawpoint)
+        offset = get_closest_angle(draw_dist)
+        stroke_width=2
+        draw_ellipse_arc(dwg, integer_green_center, pixel_dist, -offset, offset, angle,text_color, stroke_width)
+        draw_dist += 50
+
+    return True
+
+
+
+def draw_polygon(dwg, points, stroke_color="#000000", stroke_width=2, fill="none"):
+    dwg.add(dwg.polygon(
+        points=points,
+        stroke=stroke_color,
+        stroke_width=stroke_width,
+        fill=fill
+    ))
+    
+def fill_polygon(dwg, points, fill_color="#000000"):
+    dwg.add(dwg.polygon(
+        points=points,
+        fill=fill_color,
+        stroke="none"
+    ))
 
 # given a point, draw a triangle on it
 
-def drawTriangle(image, point, base, height, text_color):
+def drawTriangle(dwg, point, base, height, text_color):
+    apex = (int(point[0]), int(point[1] - (height / 2)))
+    base1 = (int(point[0] - (base / 2)), int(point[1] + (height / 2)))
+    base2 = (int(point[0] + (base / 2)), int(point[1] + (height / 2)))
 
-	apex = (int(point[0]),int(point[1]-(height/2)))
-	base1 = (int(point[0]-(base/2)),int(point[1]+(height/2)))
-	base2 = (int(point[0]+(base/2)),int(point[1]+(height/2)))
+    # Triangle vertices in (x, y) tuple format
+    vertices = [apex, base1, base2]
 
-	# draw a triangle
-	vertices = np.array([apex, base1, base2], np.int32)
-	pts = vertices.reshape((-1, 1, 2))
-	cv2.polylines(image, [pts], isClosed=True, color=(0, 0, 0), thickness=2)
+    # Draw stroke
+    draw_polygon(dwg, vertices, stroke_color="#000000", stroke_width=2)
 
-	# fill it
-	cv2.fillPoly(image, [pts], color=text_color)
+    # Fill
+    fill_polygon(dwg, vertices, fill_color=text_color)
 
 
-def drawTriangleMarkers(image, points, base, height, text_color):
+
+
+def drawTriangleMarkers(dwg, points, base, height, text_color):
 
 	for point in points:
-		drawTriangle(image, point, base, height, text_color)
+		drawTriangle(dwg, point, base, height, text_color)
 
 
 # given a list of features, draw the distance to the center of the green from each
 # (from the farthest back point)
 
-def drawGreenDistancesMin(image, adjusted_hole_array, feature_list, ypp, text_size, text_color, filter_dist=40, par_3_tees=0):
+def drawGreenDistancesMin(dwg, adjusted_hole_array, feature_list, ypp, text_size, text_color, filter_dist=40, par_3_tees=0):
 
 	hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
 
@@ -1608,242 +1901,512 @@ def drawGreenDistancesMin(image, adjusted_hole_array, feature_list, ypp, text_si
 		if dist_to_way > filter_dist:
 			continue
 
-		base = int(8 + 8*text_size)
+    	# Draw marker and label
+		base = 0.5 * text_size# base length of the triangle in relation to text hight
+		height = base #for an iscoloces triangle 
 
-		height = int((3/5)*base)
+		drawTriangleMarkers(dwg, [point], base, height, text_color)
 
-		drawTriangleMarkers(image, [point], base, height, text_color)
-
-		drawDistanceText(image, distance, point, text_size, text_color)
+		drawDistanceText(dwg, distance, point, text_size, text_color)
 
 		drawn_distances.append(point)
 
+#estimate the correct text size
+def estimate_text_size(text, font_size, char_width_factor=0.6):
+    width = int(len(text) * font_size * char_width_factor)
+    height = int(font_size)
+    return width, height
 
 # given a list of trees, draw the distance to the center of the green form each
 
-def drawGreenDistancesTree(image, adjusted_hole_array, tree_list, ypp, text_size, text_color, filter_dist=25, par_3_tees=0):
+def drawGreenDistancesTree(dwg, adjusted_hole_array, tree_list, ypp, text_size, text_color, filter_dist=25, par_3_tees=0):
+    """
+    Draws the distances from trees to the green, with appropriate filtering.
+    The function uses SVG for drawing instead of OpenCV.
+    
+    :param dwg: SVG drawing object
+    :param adjusted_hole_array: List of hole waypoints
+    :param tree_list: List of trees (as points)
+    :param ypp: Yards per pixel scaling factor
+    :param text_size: Text size for labels
+    :param text_color: Color for the text and lines
+    :param filter_dist: Minimum distance from line to consider for drawing
+    :param par_3_tees: Tee position modifier for par 3 holes
+    """
+    # Calculate text weight based on text size
+    text_weight = round(text_size * 2)
 
-	text_weight = round(text_size*2)
+    # Extract hole origin, midpoint, and green center coordinates
+    hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
 
-	hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
+    # Calculate the total hole distance
+    hole_distance = getDistance(hole_origin, green_center, ypp)
 
-	hole_distance = getDistance(hole_origin,green_center,ypp)
+    # Prepare list for distance points
+    distance_points = []
+    for i, tree in enumerate(tree_list):
+        #print(f"\n[DEBUG] Tree #{i}: type = {type(tree)}")
+        #print(f"[DEBUG] Raw tree data: {tree}")
+        
+        if isinstance(tree, np.ndarray):
+            tree_point = tree.tolist()
+            #print(f"[DEBUG] Converted to list: {tree_point}")
+        else:
+            tree_point = tree
 
-	distance_points = []
+		# Make sure we always get a flat [x, y]#
+        if isinstance(tree_point[0], (list, np.ndarray)):
+            point = tree_point[0]
+        else:
+            point = tree_point
+            
+        #Dubbing
+        #print(f"[DEBUG] Final point used: {point} (type: {type(point)}, length: {len(point) if hasattr(point, '__len__') else 'n/a'})")
 
-	for tree in tree_list:
-		point = tree.tolist()[0]
-		distance_points.append(point)
+		# Sanity check
+        if not (isinstance(point, list) or isinstance(point, tuple)) or len(point) != 2:
+            raise ValueError(f"Tree #{i} does not have a valid [x, y] structure: {point}")
+        distance_points.append(point)
 
-	drawn_distances = []
+            
+    
+    drawn_distances = []  # To store points that have already been drawn
 
-	for point in distance_points:
+    for point in distance_points:
+        distance = int(getDistance(point, green_center, ypp))
 
-		distance = int(getDistance(point,green_center,ypp))
+        # Skip if distance is too small or too large
+        if distance < 40 or (par_3_tees == 0 and distance > (0.75 * hole_distance)):
+            continue
 
-		if distance < 40:
-			continue
+        # Check if this point is close to previously drawn points
+        if any(getDistance(point, past_dist, ypp) < 15 for past_dist in drawn_distances):
+            continue
 
-		if par_3_tees == 0:
-			if distance > (0.75*hole_distance):
-				continue
+        # Skip distances that are too close to multiples of 50
+        if distance % 50 < 5 or distance % 50 > 45:
+            continue
 
-		close = False
+        # Calculate the distance to the line based on position (above or below midpoint)
+        if point[1] < midpoint[1]:
+            dist_to_way = distToLine(point, midpoint, green_center, ypp)
+            slope, intercept = getLine(midpoint, green_center)
+        else:
+            dist_to_way = distToLine(point, midpoint, hole_origin, ypp)
+            slope, intercept = getLine(midpoint, hole_origin)
 
-		if len(drawn_distances) > 0:
-			for pastdist in drawn_distances:
-				rel_dist = getDistance(point, pastdist, ypp)
-				if rel_dist < 15:
-					close = True
-					break
+        # Filter out points that are too far from the line
+        if dist_to_way > filter_dist:
+            continue
 
-		if distance % 50 < 5 or distance % 50 > 45:
-			close = True
+        # Determine if the point is to the right or left of the line
+        comp_value = (point[1] - intercept) / slope
+        right = point[0] < comp_value
 
-		if close:
-			continue
+        # Calculate text size and position based on the side of the line
+        label_width, label_height = estimate_text_size(str(distance), text_size)
+        label_position = (point[0] - 100 - label_width, point[1]) if right else (point[0] + 100, point[1]) #the labels position if left or right
 
-		if point[1] < midpoint[1]:
-			dist_to_way = distToLine(point,midpoint,green_center,ypp)
-			slope, intercept = getLine(midpoint,green_center)
-		else:
-			dist_to_way = distToLine(point,midpoint,hole_origin,ypp)
-			slope, intercept = getLine(midpoint,hole_origin)
+        # Draw the line from the tree to the label position
+        dwg.add(dwg.line(start=(point[0], point[1]), end=(label_position[0], label_position[1]), stroke=text_color, stroke_width=3))
 
-		if dist_to_way > filter_dist:
-			continue
+        # Draw the distance text near the label at about 1/3 of the text size from the end of the line
+        dwg.add(dwg.text(
+            str(distance),
+            insert=(label_position[0], label_position[1]),#at the end of the line
+            font_size=f"{text_size}px",
+            fill=text_color,
+            font_weight="normal" if text_weight < 2 else "bold",
+            font_family="Arial"
+        ))
 
+        # Add this point to the list of drawn distances to avoid duplication
+        drawn_distances.append(point)
 
-		right = True
-
-		# y = mx + b    y = carry[1]   x = (carry[1] - b) / slope
-
-		comp_value = (point[1] - intercept) / slope
-
-
-		if point[0] < comp_value:
-			right = False
-
-
-		if right:
-
-			(label_width, label_height), baseline = cv2.getTextSize(str(distance), cv2.FONT_HERSHEY_SIMPLEX, text_size, text_weight)
-
-			drawpoint = (point[0] - 75 - label_width,point[1])
-
-		else:
-
-			drawpoint = (point[0] + 75,point[1])
-
-		cv2.line(image,(int(point[0]),int(point[1])),(int(drawpoint[0]),int(drawpoint[1])),text_color, 3)
-
-		text_weight = round(text_size*2)
-
-		(label_width, label_height), baseline = cv2.getTextSize(str(distance), cv2.FONT_HERSHEY_SIMPLEX,text_size, text_weight)
-
-		x = int(drawpoint[0] + 2*text_weight)
-		y = int(drawpoint[1] + 0.5*label_height)
-
-		cv2.putText(image, str(distance), (x,y), cv2.FONT_HERSHEY_SIMPLEX, text_size, text_color, text_weight)
-
-		drawn_distances.append(point)
 
 
 # given a list of features, draw the distance to the center of the green from each
 # (from the closest point)
 
-def drawGreenDistancesMax(image, adjusted_hole_array, feature_list, ypp, text_size, text_color, filter_dist=40):
-
-	hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
-
-	hole_distance = getDistance(hole_origin,green_center,ypp)
-
-	distance_points = getMaxPoints(feature_list)
-
-	for point in distance_points:
-
-		distance = int(getDistance(point,green_center,ypp))
-
-		if distance < 40 or distance > (0.75*hole_distance):
-			continue
-
-		if point[1] < midpoint[1]:
-			dist_to_way = distToLine(point,midpoint,green_center,ypp)
-		else:
-			dist_to_way = distToLine(point,midpoint,hole_origin,ypp)
-
-		if dist_to_way > filter_dist:
-			continue
-
-		# print("distance from tee box to green:",distance)
-
-		base = int(17 + 2*text_size)
-
-		height = int((3/5)*base)
-
-		drawTriangleMarkers(image, [point], base, height, text_color)
-
-		drawDistanceText(image, distance, point, text_size, text_color)
-
-
-# draw a three-yard grid over the green image that is aligned with the center of the green
-
-def getGreenGrid(b_w_image, adjusted_hole_array, ypp):
-
-	hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
-
-	x = int(green_center[0])
-	y = int(green_center[1])
-
-	xmin = int(x - (30/ypp))
-	xmax = int(x + (30/ypp))
-	ymin = int(y - (30/ypp))
-	ymax = int(y + (39/ypp))
-
-
-	start = (x - int(0.5/ypp),y + int(0.5/ypp))
-	end = (x + int(0.5/ypp),y - int(0.5/ypp))
-
-	cv2.rectangle(b_w_image, start, end, (0,0,0), -1)
-
-
-	cropped_image = b_w_image[ymin:ymax, xmin:xmax]
-
-	(h, w) = cropped_image.shape[:2]
-
-	if w > 850:
-		line_thickness = 2
-	else:
-		line_thickness = 1
-
-	grid_x = x - xmin
-
-	while grid_x < w:
-		x1, y1 = int(grid_x), 0
-		x2, y2 = int(grid_x), h
-
-		cv2.line(cropped_image, (x1, y1), (x2, y2), (140, 140, 140), thickness=line_thickness)
-
-		grid_x += 3/ypp
-
-	grid_x = int(x - xmin - 3/ypp)
-
-	while grid_x > 0:
-		x1, y1 = int(grid_x), 0
-		x2, y2 = int(grid_x), h
-
-		cv2.line(cropped_image, (x1, y1), (x2, y2), (140, 140, 140), thickness=line_thickness)
-
-		grid_x -= 3/ypp
-
-	grid_y = y - ymin
-
-	while grid_y < h:
-		x1, y1 = 0, int(grid_y)
-		x2, y2 = w, int(grid_y)
-
-		cv2.line(cropped_image, (x1, y1), (x2, y2), (140, 140, 140), thickness=line_thickness)
-
-		grid_y += 3/ypp
-
-	grid_y = int(y - ymin - 3/ypp)
-
-	while grid_y > 0:
-		x1, y1 = 0, int(grid_y)
-		x2, y2 = w, int(grid_y)
-
-		cv2.line(cropped_image, (x1, y1), (x2, y2), (140, 140, 140), thickness=line_thickness)
-
-		grid_y -= 3/ypp
-
-	padded_image = cv2.copyMakeBorder(cropped_image,line_thickness,line_thickness,line_thickness,line_thickness, cv2.BORDER_CONSTANT, value=(140, 140, 140))
-
-	return padded_image
-
-def getFixedSizeImage(rotated_image, final_green_array, adjusted_hole_array, ypp, target_width=1275, target_height=2100):
-    # Create a blank white image with consistent dimensions
-    fixed_image = np.ones((target_height, target_width, 3), dtype=np.uint8) * 255
+def drawGreenDistancesMax(dwg, adjusted_hole_array, feature_list, ypp, text_size, text_color, filter_dist=40):
+    """
+    Draws distance markers for the farthest points (e.g., trees, hazards) near the green.
     
-    # Get the bounding box of the green
+    :param dwg: SVG drawing object
+    :param adjusted_hole_array: Waypoints for the hole
+    :param feature_list: List of feature points (e.g., trees, bunkers)
+    :param ypp: Yards per pixel
+    :param text_size: Font size for distance text
+    :param text_color: Color of the triangle and text
+    :param filter_dist: Max perpendicular distance from the fairway line to consider
+    """
+    
+    hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
+    #print("get dinstancde")
+    hole_distance = getDistance(hole_origin, green_center, ypp)
+
+    # Retrieve and sanitize max distance points
+    #print("# Retrieve and sanitize max distance points")
+    raw_points = getMaxPoints(feature_list)
+    distance_points = []
+
+    for i, point in enumerate(raw_points):
+        # Handle nested or incorrect structures
+        if isinstance(point, (list, tuple, np.ndarray)):
+            if isinstance(point[0], (list, tuple, np.ndarray)):
+                point = point[0]  # Unpack one level
+            if len(point) == 2 and all(isinstance(coord, (int, float)) for coord in point):
+                distance_points.append(point)
+            else:
+                print(f"[WARN] Invalid point structure at index {i}: {point}")
+        else:
+            print(f"[WARN] Non-iterable point at index {i}: {point}")
+
+    for point in distance_points:
+        distance = int(getDistance(point, green_center, ypp))
+
+        # Skip too-close or too-far distances
+        if distance < 40 or distance > (0.75 * hole_distance):
+            continue
+
+        # Distance from fairway line
+        #print("# Distance from fairway line")
+        if point[1] < midpoint[1]:
+            dist_to_way = distToLine(point, midpoint, green_center, ypp)
+        else:
+            dist_to_way = distToLine(point, midpoint, hole_origin, ypp)
+
+        if dist_to_way > filter_dist:
+            continue
+
+        # Draw marker and label
+        base = text_size #base length of the triangle in relation to text hight
+        height = base #for an iscoloces triangle 
+        
+        print("draw triangle markers")
+        drawTriangleMarkers(dwg, [point], base, height, text_color)
+        drawDistanceText(dwg, distance, point, text_size, text_color)
+
+
+def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px, green_center_lat, green_center_lon, ypp, angle, contour_interval=1):
+    
+    from scipy.interpolate import griddata
+    try:
+        # 0. Bounding box (not strictly needed now but useful if you want limits later)
+        #green_min_lat, green_min_lon, green_max_lat, green_max_lon = getBoundingBoxLatLon(green_nodes)
+
+        # 1. Helper: Convert lat/lon to SVG pixels
+        def latlon_to_svg(lat, lon, rotate=False):
+            print("this is the rotation angle:", angle)
+            lat = float(lat)
+            lon = float(lon)
+
+            delta_lat = lat - float(green_center_lat)
+            delta_lon = lon - float(green_center_lon)
+
+            # Degrees to meters
+            delta_lat_m = delta_lat * 111000
+            delta_lon_m = delta_lon * 111000 * math.cos(math.radians(float(green_center_lat)))
+
+            # Meters to yards
+            delta_lat_yds = delta_lat_m * 1.09361
+            delta_lon_yds = delta_lon_m * 1.09361
+            
+            # Rotate coordinates around (0,0) by angle (convert to radians)
+            angle_rad = np.radians(-(angle-90))
+
+            # Yards to pixels
+            delta_x_px = delta_lon_yds / ypp
+            delta_y_px = delta_lat_yds / ypp
+            
+            # SVG coordinates before rotation (note: y axis is downward in SVG)
+            unrotated_x = x_center_px + delta_x_px
+            unrotated_y = y_center_px - delta_y_px
+            
+            if rotate:
+                # Apply rotation around center
+                print("rotating around center by angle:", angle_rad)
+                rotated_x, rotated_y = Rotate2D(
+                    np.array([[unrotated_x, unrotated_y]]),
+                    np.array([x_center_px, y_center_px]),
+                    angle_rad
+                )[0]
+                return rotated_x, rotated_y
+            else:
+                return unrotated_x, unrotated_y
+
+        # 2. Helper: Color based on slope magnitude
+        def get_arrow_color(slope):
+            if slope <=0.5:
+                    return '#a1a1a1' #GREY 
+            elif slope <=1.0:
+                    return '#5ac5fa' #LIGHT BLUE
+            elif slope <= 2.0:
+                return '#3375f6' #BETWEEN 1 - 2 BLUE
+            elif slope <= 3.0:
+                return '#5fcb3f' # 2 - 3 LIGHT GREEN
+            elif slope <= 4.0: # 3 - 4 GREEN
+                return '#3d8025'
+            elif slope <= 5.0:
+                return '#dc3b2f' # 4 - 5 RED
+            elif slope <= 6.0:
+                return '#ee7a30' # 5 - 6  ORANGE
+            elif slope <= 7.0:
+                return '#d8337e' # 6 - 7  PURPLE
+            else:
+                return "magenta"
+
+        # 3. Prepare points
+        points = []
+        elevations = []
+        for (lat, lon), elev in elevation_map.items():
+            svg_x, svg_y = latlon_to_svg(lat, lon, rotate=True)
+            points.append((svg_x, svg_y))
+            elevations.append(elev)
+
+        points = np.array(points)
+        elevations = np.array(elevations)
+
+        # 4. Triangulate for contour generation
+        tri = mtri.Triangulation(points[:, 0], points[:, 1])
+
+        # 5. Generate Contours
+        fig, ax = plt.subplots()
+        ax.set_axis_off()
+        cs = ax.tricontour(
+            tri,
+            elevations,
+            #levels=np.arange(np.min(elevations), np.max(elevations), contour_interval),
+            levels=np.linspace(np.min(elevations), np.max(elevations), 20),
+            linewidths=0.5,
+            colors='grey'
+        )
+
+        # 6. Draw contours manually into SVG
+        for collection in cs.collections:
+            for path in collection.get_paths():
+                vertices = path.vertices
+                if len(vertices) < 2:
+                    continue
+                path_data = []
+                start_x, start_y = vertices[0]
+                path_data.append(f"M {start_x},{start_y}")
+                for x, y in vertices[1:]:
+                    path_data.append(f"L {x},{y}")
+                dwg.add(dwg.path(d=" ".join(path_data), stroke="grey", fill="none", stroke_width=0.5))
+
+        plt.close(fig)  # Cleanup Matplotlib figure
+
+        # 7. Create Arrow Marker
+        # Define a smaller arrowhead marker
+        num_cells = 20
+        arrow_length = 5 #svg units
+        
+        arrow_markers = {}
+
+        for color in ['#a1a1a1','#5ac5fa','#3375f6','#5fcb3f','#3d8025','#dc3b2f','#ee7a30','#d8337e','magenta']:
+            marker = dwg.marker(
+                id=f'arrow-{color}',
+                insert=(0, 3),
+                size=(1.5, 1.5),
+                orient='auto',
+                markerUnits='userSpaceOnUse'
+            )
+            marker.add(dwg.path(d="M0,2 L0,4 L3,3 z", fill=color)) #draws the arrow tip like a
+            dwg.defs.add(marker)
+            arrow_markers[color] = marker
+
+		# step 8
+  		# Create regular grid in rotated SVG space
+        print("DEBUG:Now creating regular SVG grid.")
+        lats = [lat for lat, lon in elevation_map.keys()]
+        lons = [lon for lat, lon in elevation_map.keys()]
+        svg_coords = [latlon_to_svg(lat, lon, rotate=True) for lat, lon in zip(lats, lons)]
+
+        xs, ys = zip(*svg_coords)
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+
+        x_grid = np.linspace(x_min, x_max, num_cells)
+        y_grid = np.linspace(y_min, y_max, num_cells)
+        xx, yy = np.meshgrid(x_grid, y_grid)
+
+        # Build interpolator from known points
+        points = np.column_stack((xs, ys))
+        values = [elevation_map[(lat, lon)] for lat, lon in zip(lats, lons)]
+        grid_z = griddata(points, values, (xx, yy), method='nearest')
+        print("points shape:", points.shape)
+        print("points[:5]:", points[:5])
+        print("points x range:", points[:,0].min(), points[:,0].max())
+        print("points y range:", points[:,1].min(), points[:,1].max())
+        #grid_z = griddata(points, values, (xx, yy), method='cubic')
+
+        # Calculate gradients (slope direction)
+        dy, dx = np.gradient(grid_z, y_grid[1] - y_grid[0], x_grid[1] - x_grid[0])  # dZ/dY, dZ/dX
+        print("dx:\n", dx)
+        print("dy:\n", dy)
+        total = dx.size
+        nans = np.isnan(dx).sum() + np.isnan(dy).sum()
+        print(f"{nans}/{2*total} values are NaN in gradients")		
+
+        # Compute arrows based on gradients
+        print("DEBUG: now computing arrrows")
+        for j in range(num_cells):
+            for i in range(num_cells):
+                if np.isnan(dx[j, i]) or np.isnan(dy[j,i]):
+                    continue
+
+                gx, gy = dx[j, i], dy[j, i]
+                magnitude = np.hypot(gx, gy)
+                if magnitude < 0.00001:
+                    print("skipping flat")
+                    continue  # skip flat
+
+                # Normalize and scale for SVG arrow
+                gx /= magnitude
+                gy /= magnitude
+
+                start_x, start_y = xx[j, i], yy[j, i]
+                end_x = start_x - arrow_length * gx
+                end_y = start_y - arrow_length * gy
+                
+                # Determine arrow color
+                print("slope:", magnitude)
+                color = get_arrow_color(magnitude * 100)
+                marker = arrow_markers[color]
+                print("now drawing the arrow lines")
+                print(f"start_x: {start_x}, start_y: {start_y}, end_x: {end_x}, end_y: {end_y}")
+                print(f"color: {color}")
+                print(f"marker funciri: {marker.get_funciri()}")
+
+                dwg.add(dwg.line(
+                    start=(start_x, start_y),
+                    end=(end_x, end_y),
+                    stroke=color,
+                    stroke_width=0.5, #arrow stroke width
+                    marker_end=marker.get_funciri()
+                ))
+
+                # Optional: add elevation text
+                elev = grid_z[j, i]
+                dwg.add(dwg.text(
+                    f"{elev:.2f}",
+                    insert=(end_x + 2, end_y),
+                    font_size="2px",
+                    fill="black"
+                ))
+
+    except Exception as e:
+        print(f"Error while generating contours and arrows: {e}")
+
+
+# draw a three-yard grid over the green dwg that is aligned with the center of the green
+
+def getGreenGrid(adjusted_hole_array, ypp, dwg, holeway_nodes, angle, elevation_map=None):
+    """
+    Draws a green grid in SVG format with central marker and grid lines based on the hole coordinates.
+
+    :param adjusted_hole_array: List of hole waypoints
+    :param ypp: Yards per pixel scaling factor
+    :param dwg: SVG drawing object (svgwrite.Drawing)
+    :return: SVG drawing object with grid
+    """
+    green_center = holeway_nodes[-1]
+    green_center_lat = green_center.lat
+    green_center_lon = green_center.lon
+    
+    hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
+    x, y = map(int, green_center)
+
+    # Define cropping box (in pixel coordinates)
+    xmin = int(x - (30 / ypp))
+    xmax = int(x + (30 / ypp))
+    ymin = int(y - (30 / ypp))
+    ymax = int(y + (30 / ypp))#was 39 which I think was a typo
+    
+    x_grid_min = int(x - (30 / ypp))  # match xmin
+
+    # Draw central grid marker in SVG (center marker)
+    rect_half = int(0.5 / ypp)
+    start = (x - rect_half, y + rect_half)
+    end = (x + rect_half, y - rect_half)
+    rectangle_points = [(start[0], start[1]), (end[0], start[1]),
+                        (end[0], end[1]), (start[0], end[1])]
+    draw_polygon(dwg, rectangle_points, stroke_color="#000000", stroke_width=2, fill="none")
+
+    # Set up grid spacing
+    spacing = 3 / ypp
+    grid_color = "#d1d1d1"  # Grid color as a hex code, light gray
+    line_thickness = 2 if (xmax - xmin) > 850 else 1  # Set line thickness based on width
+
+    # Draw vertical grid lines (right of center)
+    for gx in range(xmin, xmax, int(spacing)):
+        dwg.add(dwg.line(start=(gx, ymin), end=(gx, ymax), stroke=grid_color, stroke_width=line_thickness))
+
+    # Draw vertical grid lines (left of center)
+    for gx in range(xmin - int(spacing), x_grid_min - 1, -int(spacing)):
+    	dwg.add(dwg.line(start=(gx, ymin), end=(gx, ymax), stroke=grid_color, stroke_width=line_thickness))
+
+    # Draw horizontal grid lines (below center)
+    for gy in range(ymin, ymax, int(spacing)):
+        dwg.add(dwg.line(start=(xmin, gy), end=(xmax, gy), stroke=grid_color, stroke_width=line_thickness))
+
+    # Draw horizontal grid lines (above center)
+    for gy in range(ymin - int(spacing), 0, -int(spacing)):
+        dwg.add(dwg.line(start=(xmin, gy), end=(xmax, gy), stroke=grid_color, stroke_width=line_thickness))
+
+    # Draw the border around the cropped grid area (using a rectangle)
+    dwg.add(dwg.rect(insert=(xmin, ymin), size=(xmax - xmin, ymax - ymin), stroke=grid_color, stroke_width=2, fill="none"))
+    
+    
+    # Define clipping path ID
+    clip_id = "grid-clip"
+
+    # Define the clipping rectangle
+    clip_path = dwg.defs.add(dwg.clipPath(id=clip_id))
+    clip_path.add(dwg.rect(insert=(xmin, ymin), size=(xmax - xmin, ymax - ymin)))
+
+    # Create a group to hold everything you want to clip
+    clipped_group = dwg.g(clip_path=f"url(#{clip_id})")
+
+    # Finally, add the clipped group to the main drawing
+    dwg.add(clipped_group)
+    
+     # If elevation data is available, add contour lines and arrow
+    if elevation_map:
+        print("elevation data is found!")
+    try:
+        generate_contours_and_arrows(elevation_map, dwg, x, y,  green_center_lat, green_center_lon, ypp, angle)
+    except Exception as e:
+        print(f"Error while generating contours and arrows: {e}")
+
+    return dwg
+
+
+
+def getFixedSizedwg(rotated_dwg, final_green_array, adjusted_hole_array, ypp, target_width=1275, target_height=2100):
+    # Create a blank white canvas with fixed dimensions
+    fixed_dwg = np.ones((target_height, target_width, 3), dtype=np.uint8) * 255
+    
+    # Get the bounding box of the green (coordinates of the green)
     g_minx = min(point[0] for array in final_green_array for point in array)
     g_miny = min(point[1] for array in final_green_array for point in array)
     g_maxx = max(point[0] for array in final_green_array for point in array)
     g_maxy = max(point[1] for array in final_green_array for point in array)
     
-    # Calculate green dimensions
+    # Calculate green dimensions (width and height)
     green_width = g_maxx - g_minx
     green_height = g_maxy - g_miny
     
-    # Determine scale factor - we want the green to take up ~60% of the image width
-    # This ensures consistent scaling across all greens
+    # Determine scale factor to fit the green to about 60% of the target width
     target_green_width = target_width * 0.6
     scale = target_green_width / max(green_width, 1)  # Avoid division by zero
     
-    # Calculate offset to center the green
+    # Calculate the offset to center the green on the canvas
     offset_x = int((target_width - green_width * scale) / 2 - g_minx * scale)
     offset_y = int((target_height - green_height * scale) / 2 - g_miny * scale)
     
-    # Transform all features to the new coordinate system
+    # Transform all features (green, hole) to the new coordinate system
     def transform_array_list(array_list):
         transformed = []
         for feature in array_list:
@@ -1859,10 +2422,113 @@ def getFixedSizeImage(rotated_image, final_green_array, adjusted_hole_array, ypp
     fixed_green_array = transform_array_list(final_green_array)
     fixed_hole_array = transform_array_list([adjusted_hole_array[0]])[0]
     
-    # Calculate the new yards per pixel based on the scale
+    # Calculate the new yards per pixel (ypp) based on the scale
     fixed_ypp = ypp / scale
     
-    return fixed_image, fixed_green_array, fixed_hole_array, fixed_ypp
+    # Now create the SVG output
+    dwg = svgwrite.Drawing(size=(target_width, target_height), viewBox=f"0 0 {target_width} {target_height}")
+    
+    # Remove the white background rectangle since it’s redundant
+    # Instead, we'll fill the entire background with the green area first
+    # Add transformed green polygons (assumes the green is a polygon with multiple points)
+    for feature in fixed_green_array:
+        points = [(point[0], point[1]) for point in feature]
+        dwg.add(dwg.polygon(points=points, fill="green", stroke="black", stroke_width=2))
+    
+    # Add transformed hole locations (represented as circles with a small radius)
+    hole_radius = 5
+    for hole in fixed_hole_array:
+        dwg.add(dwg.circle(center=(hole[0], hole[1]), r=hole_radius, fill="black"))
+    
+    return dwg, fixed_green_array, fixed_hole_array, fixed_ypp
+
+
+
+def parse_svg_length(length):
+    if isinstance(length, (int, float)):
+        return float(length)
+    elif isinstance(length, str):
+        return float(length.replace("mm", "").replace("px", "").strip())
+    raise ValueError(f"Unsupported SVG length format: {length}")
+
+def to_float(val):
+    if isinstance(val, (int, float)):
+        return float(val)
+    elif isinstance(val, str):
+        return float(val.strip())
+    raise ValueError(f"Unexpected type for padding value: {type(val)}")
+
+
+#SVG add padding and save image, adds a white color to the background
+def add_svg_padding_and_save(dwg, file_name, top_y_pad, bottom_y_pad, left_x_pad, right_x_pad, background_color="#FFFFFF", output_folder="output"):
+    from svgwrite import Drawing
+    
+    def parse_svg_length(length):
+        if isinstance(length, str):
+            if length.endswith("mm"):
+                return float(length.replace("mm", ""))
+            elif length.endswith("px"):
+                px = float(length.replace("px", ""))
+                return px * 25.4 / 300  # Convert px to mm at 300 DPI
+            else:
+                raise ValueError(f"Unsupported SVG length unit in: {length}")
+        elif isinstance(length, (float, int)):
+            return float(length)
+        else:
+            raise ValueError(f"Invalid SVG length format: {length}")
+
+    def to_float(value):
+        try:
+            return float(value)
+        except Exception as e:
+            print(f"[ERROR] Could not convert {value} to float: {e}")
+            raise
+
+    try:
+        old_width = parse_svg_length(dwg['width'])
+        old_height = parse_svg_length(dwg['height'])
+    except Exception as e:
+        print(f"[ERROR] Failed to parse width/height from dwg: {e}")
+        raise
+
+    pad_factor = 25.4 / 300  # Convert px to mm assuming 96dpi
+
+    try:
+        left_pad_mm = to_float(left_x_pad) * pad_factor
+        right_pad_mm = to_float(right_x_pad) * pad_factor
+        top_pad_mm = to_float(top_y_pad) * pad_factor
+        bottom_pad_mm = to_float(bottom_y_pad) * pad_factor
+    except Exception as e:
+        print(f"[ERROR] Padding conversion failed: {e}")
+        raise
+
+    new_width = old_width + left_pad_mm + right_pad_mm
+    new_height = old_height + top_pad_mm + bottom_pad_mm
+
+    try:
+        padded_dwg = Drawing(
+            filename=f"{output_folder}/{file_name}.svg",
+            size=(f"{new_width}mm", f"{new_height}mm")
+        )
+		#creates the final drawing box that should contain everything. 
+        padded_dwg.add(padded_dwg.rect(
+            insert=(0, 0),
+            size=(f"{new_width}mm", f"{new_height}mm"),
+            fill=background_color
+        ))
+
+        group = dwg.g(transform=f"translate({left_pad_mm},{top_pad_mm})")
+        for element in dwg.elements:
+            group.add(element)
+        padded_dwg.add(group)
+
+        padded_dwg.save()
+        print(f"[INFO] Saved padded SVG to {padded_dwg.filename}")
+    except Exception as e:
+        print(f"[ERROR] Failed during SVG creation or saving: {e}")
+        raise
+
+
 
 
 def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chosen_tbox,filter_width=50,short_factor=1,med_factor=1):
@@ -1916,9 +2582,9 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 			continue
 
 
-		# check if we are going to overwrite an existing image
+		# check if we are going to overwrite an existing dwg
 
-		file_name = "hole_" + str(hole_num) + ".png"
+		file_name = "hole_" + str(hole_num) + ".svg.svg"
 
 		if not replace_existing and file_name in file_list:
 			print("Output file exists: skipping hole")
@@ -1930,7 +2596,7 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 			counter = 2
 
 			while file_name in new_file_list:
-				file_name = "hole_" + str(hole_num) + "_" + str(counter) + ".png"
+				file_name = "hole_" + str(hole_num) + "_" + str(counter) + ".svg"
 				print(file_name)
 				counter += 1
 		# else:
@@ -1944,19 +2610,22 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 		hole_way_nodes, hole_result, hole_minlat, hole_minlon, hole_maxlat, hole_maxlon = getHoleOSMData(way, lat_degree_distance, lon_degree_distance)
 
-		# create a base image to use for this hole (and calculate yards per pixel)
-		image, x_dim, y_dim, ypp = generateImage(hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, lat_degree_distance, lon_degree_distance,colors["background"])
+		# create a base dwg to use for this hole (and calculate yards per pixel)
+		dwg, x_dim, y_dim, ypp = generateSVG(hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, lat_degree_distance, lon_degree_distance,colors["background"])
 
 		# find this hole's green
 		green_nodes = identifyGreen(hole_way_nodes, hole_result)
-
+  
+		#calculate the 3 yard lat/lon coordinates for elevation calculation and contourline
+		elevation_map = get_green_grid_points(green_nodes, spacing_yards=3)
+        
 		green_array = translateNodestoNP(green_nodes, hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, x_dim, y_dim)
 
 		# categorize all of the feature types (we do different things with each of them)
 		sand_traps, tee_boxes, fairways, water_hazards, woods, trees = categorizeWays(hole_result, hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, x_dim, y_dim)
 
 		# by default, everything will be drawn as it is oriented in real life
-		# but, for a yardage book, we want the hole drawn from the bottom to the top of the image
+		# but, for a yardage book, we want the hole drawn from the bottom to the top of the dwg
 		# so, we need to figure out how much to rotate everythiung for this hole
 		angle = getRotateAngle(translateNodestoNP(hole_way_nodes,hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, x_dim, y_dim))
 
@@ -1965,17 +2634,17 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 
 		# rotate all of our features, including the green and the hole waypoints
-		rotated_fairways = rotateArrayList(image,fairways,angle)
-		rotated_tee_boxes = rotateArrayList(image,tee_boxes,angle)
-		rotated_water_hazards = rotateArrayList(image,water_hazards,angle)
-		rotated_sand_traps = rotateArrayList(image,sand_traps,angle)
-		rotated_woods = rotateArrayList(image,woods,angle)
-		rotated_trees = rotateArrayList(image,trees,angle)
+		rotated_fairways = rotateArrayList(dwg,fairways,angle)
+		rotated_tee_boxes = rotateArrayList(dwg,tee_boxes,angle)
+		rotated_water_hazards = rotateArrayList(dwg,water_hazards,angle)
+		rotated_sand_traps = rotateArrayList(dwg,sand_traps,angle)
+		rotated_woods = rotateArrayList(dwg,woods,angle)
+		rotated_trees = rotateArrayList(dwg,trees,angle)
 
-		rotated_green = rotateArray(image,green_array,angle)
+		rotated_green = rotateArray(dwg,green_array,angle)
 		rotated_green_array = [rotated_green]
 
-		rotated_waypoints = rotateArray(image,way_node_array,angle)
+		rotated_waypoints = rotateArray(dwg,way_node_array,angle)
 
 
 		# we need to filter out any features that don't belong to this hole
@@ -1988,14 +2657,19 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 		filtered_trees = filterArrayList(rotated_waypoints, rotated_trees, ypp, hole_par, filter_yards=25)
 
 
-		# create a new, rotated base image to work with
-		rotated_image, ymin, xmin, ymax, xmax = getNewImage(image,angle,colors["background"])
+		# create a new, rotated base dwg to work with
+		rotated_dwg, ymin, xmin, ymax, xmax = getNewdwg(dwg,angle,colors["background"])
 
 
 		# we need to adjust all our rotated features
+		#print(f"filtered_fairways type: {type(filtered_fairways)}")
+		print("filtering final fairways")
 		final_fairways, fw_minx, fw_miny, fw_maxx, fw_maxy = adjustRotatedFeatures(filtered_fairways, ymin, xmin)
+		print("filtering final t boxes")
 		final_tee_boxes, tb_minx, tb_miny, tb_maxx, tb_maxy = adjustRotatedFeatures(filtered_tee_boxes, ymin, xmin)
+		print("filtering final water hazards")
 		final_water_hazards, n1, n2, n3, n4 = adjustRotatedFeatures(filtered_water_hazards, ymin, xmin)
+		print("filtering final woods")
 		final_woods, n1, n2, n3, n4 = adjustRotatedFeatures(filtered_woods, ymin, xmin)
 		final_trees, n1, n2, n3, n4 = adjustRotatedFeatures(filtered_trees, ymin, xmin)
 
@@ -2006,21 +2680,23 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 		adjusted_hole_array, n1, n2, n3, n4 = adjustRotatedFeatures([rotated_waypoints], ymin, xmin)
 
-		# finally, we can draw all of the features on our image (with specific colors for each)
+		# finally, we can draw all of the features on our dwg (with specific colors for each)
 
-		drawFeatures(rotated_image, final_fairways, colors["fairways"], line=1)
-		drawFeatures(rotated_image, final_tee_boxes, colors["tee boxes"], line=-1)
-		drawFeatures(rotated_image, final_water_hazards, colors["water"], line=-1)
-		drawFeatures(rotated_image, final_woods, colors["woods"], line=-1)
-		drawFeatures(rotated_image, final_green_array, colors["greens"], line=1)
+		drawFeatures(rotated_dwg, final_fairways, colors["fairways"], line_width=1)
+		drawFeatures(rotated_dwg, final_tee_boxes, colors["tee boxes"], line_width=-1)
+		drawFeatures(rotated_dwg, final_water_hazards, colors["water"], line_width=-1, feature_type="water")
+		drawFeatures(rotated_dwg, final_woods, colors["woods"], line_width=-1, feature_type="woods")
+		drawFeatures(rotated_dwg, final_green_array, colors["greens"], line_width=1)
 
 		# drawing the sand traps and trees last so they aren't overlapped by fairways, etc.
-		drawFeatures(rotated_image, final_sand_traps, colors["sand"], line=-1)
-		drawTrees(rotated_image, final_trees, colors["trees"])
+		print("drawing sand features")
+		drawFeatures(rotated_dwg, final_sand_traps, colors["sand"], line_width=-1, feature_type="sand")
+		drawTrees(rotated_dwg, final_trees, colors["trees"])
 
 
-		# now we need to pad or crop the image to get a consistent aspect ratio
+		# now we need to pad or crop the dwg to get a consistent aspect ratio
 		# future TODO: clean this all up into functions, see about making aspect ratio adjustable
+		print("now we need to pad or crop the dwg to get a consistent aspect ratio")
 		lower_bound_x = min(fw_minx, tb_minx, g_minx, st_minx) - (20/ypp) - xmin
 		lower_bound_y = min(fw_miny, tb_miny, g_miny, st_miny) - (5/ypp) - ymin - 100
 		upper_bound_x = max(fw_maxx, tb_maxx, g_maxx, st_maxx) + (20/ypp) - xmin + 100
@@ -2034,7 +2710,7 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 		# start = (int(lower_bound_x - xmin),int(lower_bound_y - ymin))
 		# end = (int(upper_bound_x - xmin),int(upper_bound_y - ymin))
 
-		# cv2.rectangle(rotated_image, start, end, (0,0,255), 2)
+		# cv2.rectangle(rotated_dwg, start, end, (0,0,255), 2)
 
 
 		height = upper_bound_y - lower_bound_y
@@ -2070,55 +2746,58 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 		# using eventual height to get the text size and draw everything accordingly
 
+		bb_xmin, bb_ymin, bb_xmax, bb_ymax = createHoleBoundingBox(rotated_waypoints, ypp)
 
-		# bb_xmin, bb_ymin, bb_xmax, bb_ymax = createHoleBoundingBox(rotated_waypoints, ypp)
 
-
-		# adjusting the font size to vary based on how tall the image is in pixels
+		# adjusting the font size to vary based on how tall the dwg is in pixels
 		# this way, the lettering will look consistent across holes, even if one is
 		# 500 yards and one is 100 yards (this used to be a problem)
-
-		text_size = 1.5/3000*eventual_height
+		print("adjusting the font size to vary based on how tall the dwg is in pixels")
+		text_size = 48/3000*eventual_height
 		text_size = round(text_size,2)
 
 
 		# for a par 3, all we need to do is give distances to the center of the green from the tee box
 		if hole_par == 3:
-
-			drawGreenDistancesMin(rotated_image, adjusted_hole_array, final_tee_boxes, ypp, text_size, colors["text"], par_3_tees=1)
+			print("drawing carry distance to green")
+			drawGreenDistancesMin(rotated_dwg, adjusted_hole_array, final_tee_boxes, ypp, text_size, colors["text"], par_3_tees=1)
 
 		# for longer holes, there's more to do:
 		else:
-
+			print("draw the carry distance to all the sand traps and water hazards")
 			# draw the carry distance to all the sand traps and water hazards
-			right_carries, left_carries = drawCarryDistances(rotated_image, adjusted_hole_array, final_tee_boxes, final_sand_traps, ypp, text_size, colors["text"])
-			add_r, add_l = drawCarryDistances(rotated_image, adjusted_hole_array, final_tee_boxes, final_water_hazards, ypp, text_size, colors["text"])
+			right_carries, left_carries = drawCarryDistances(rotated_dwg, adjusted_hole_array, final_tee_boxes, final_sand_traps, ypp, text_size, colors["text"])
+			add_r, add_l = drawCarryDistances(rotated_dwg, adjusted_hole_array, final_tee_boxes, final_water_hazards, ypp, text_size, colors["text"])
 
 			right_carries += add_r
 			left_carries += add_l
 
 			# if there aren't any sand traps or water hazards, draw something anyway to give the hole some scale
-			drawExtraCarries(rotated_image, adjusted_hole_array, final_tee_boxes, right_carries, left_carries, ypp, text_size, colors["text"])
+			drawExtraCarries(rotated_dwg, adjusted_hole_array, final_tee_boxes, right_carries, left_carries, ypp, text_size, colors["text"])
 
 			# now, draw distances to the center of the green from any notable features (like traps or hazards)
-			drawGreenDistancesMin(rotated_image, adjusted_hole_array, final_sand_traps, ypp, text_size, colors["text"])
-			drawGreenDistancesMin(rotated_image, adjusted_hole_array, final_water_hazards, ypp, text_size, colors["text"])
-			drawGreenDistancesMax(rotated_image, adjusted_hole_array, final_fairways, ypp, text_size, colors["text"])
-			drawGreenDistancesTree(rotated_image, adjusted_hole_array, final_trees, ypp, text_size, colors["text"])
+			print("# now, draw distances to the center of the green from any notable features (like traps or hazards)")
+			drawGreenDistancesMin(rotated_dwg, adjusted_hole_array, final_sand_traps, ypp, text_size, colors["text"])
+			drawGreenDistancesMin(rotated_dwg, adjusted_hole_array, final_water_hazards, ypp, text_size, colors["text"])
+			print("# now, draw distances to FAIRWAYS from any notable features (like traps or hazards)")
+			drawGreenDistancesMax(rotated_dwg, adjusted_hole_array, final_fairways, ypp, text_size, colors["text"])
+			print("# now, draw distances to TREES from any notable features (like traps or hazards)")
+			drawGreenDistancesTree(rotated_dwg, adjusted_hole_array, final_trees, ypp, text_size, colors["text"])
 
 			# finally, draw arcs on the fairway every 50 yards from the center of the green
-			drawGreenDistancesAnyWaypoint(rotated_image, adjusted_hole_array, ypp, 50, text_size, colors["text"])
-
+			print("# finally, draw arcs on the fairway every 50 yards from the center of the green")
+			drawGreenDistancesAnyWaypoint(rotated_dwg, adjusted_hole_array, ypp, 50, text_size, colors["text"])
 
 
 
 		# now, we need to do a second round of padding to make the aspect ratio work
 		# in case we ran out of room with our earlier efforts
+		print("# now, we need to do a second round of padding to make the aspect ratio work")
 
-		cropped_image = rotated_image[lower_bound_y:upper_bound_y, lower_bound_x:upper_bound_x]
+		cropped_width = upper_bound_x - lower_bound_x
+		cropped_height = upper_bound_y - lower_bound_y
 
-		height = upper_bound_y - lower_bound_y
-		width = upper_bound_x - lower_bound_x
+		cropped_dwg = svgwrite.Drawing(size=(f"{cropped_width}px", f"{cropped_height}px"))
 
 		if height/width > 2.83:
 			new_width = math.ceil(1/2.83 * height)
@@ -2138,16 +2817,17 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 			top_y_pad = int((new_height - height) / 2)
 			bottom_y_pad = int((new_height - height) / 2)
 
-		padded_image = cv2.copyMakeBorder(cropped_image,top_y_pad,bottom_y_pad,left_x_pad,right_x_pad, cv2.BORDER_CONSTANT, value=(94, 166, 44))
+		#adds green to the backgroud of the image!!!!
+		#padded_dwg = cv2.copyMakeBorder(cropped_dwg,top_y_pad,bottom_y_pad,left_x_pad,right_x_pad, cv2.BORDER_CONSTANT, value=(94, 166, 44))
+		# save the dwg file to the output folder
+  		#cv2.imwrite(("output/" + file_name), padded_dwg)
+ 		#add SVG padding and save image
+		print("#add SVG padding and save image")
+		add_svg_padding_and_save(rotated_dwg, file_name, top_y_pad, bottom_y_pad,left_x_pad, right_x_pad) 
+		#rotated_dwg.saveas(f"output/{file_name.replace('.png', '.svg')}")
+  		
 
-
-		# save the image file to the output folder
-		cv2.imwrite(("output/" + file_name), padded_image)
-
-
-
-
-		# now, we need to make the green image for this hole
+		# now, we need to make the green dwg for this hole
 		print('creating green grid')
 
 		try:
@@ -2159,21 +2839,20 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 		# this time, we want to rotate the green (and everythign else) to be aligned front to back
 		angle = getMidpointAngle(translateNodestoNP(hole_way_nodes,hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, x_dim, y_dim))
-
-
+		print("DEBUG: this is the green rotation angle", angle)
+                                  
 		# again, we need to rotate everything, including the green and hole waypoints
-		rotated_fairways = rotateArrayList(image,fairways,angle)
-		rotated_tee_boxes = rotateArrayList(image,tee_boxes,angle)
-		rotated_water_hazards = rotateArrayList(image,water_hazards,angle)
-		rotated_sand_traps = rotateArrayList(image,sand_traps,angle)
-		rotated_woods = rotateArrayList(image,woods,angle)
+		rotated_fairways = rotateArrayList(dwg,fairways,angle)
+		rotated_tee_boxes = rotateArrayList(dwg,tee_boxes,angle)
+		rotated_water_hazards = rotateArrayList(dwg,water_hazards,angle)
+		rotated_sand_traps = rotateArrayList(dwg,sand_traps,angle)
+		rotated_woods = rotateArrayList(dwg,woods,angle)
 
-		rotated_green = rotateArray(image,green_array,angle)
+		rotated_green = rotateArray(dwg,green_array,angle)
 		rotated_green_array = [rotated_green]
 
 		way_node_array = translateNodestoNP(hole_way_nodes, hole_minlat, hole_minlon, hole_maxlat, hole_maxlon, x_dim, y_dim)
-		rotated_waypoints = rotateArray(image,way_node_array,angle)
-
+		rotated_waypoints = rotateArray(dwg,way_node_array,angle)
 
 		# and again, we want to filter out anything that isn't close by and relevant
 		filtered_fairways = filterArrayList(rotated_waypoints, rotated_fairways, ypp, hole_par, fairway=1, filter_yards=filter_width, small_filter=short_factor, med_filter=med_factor)
@@ -2183,8 +2862,8 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 		filtered_woods = filterArrayList(rotated_waypoints, rotated_woods, ypp, hole_par, filter_yards=None)
 
 
-		# time to make a new image
-		rotated_image, ymin, xmin, ymax, xmax = getNewImage(image,angle,colors["background"])
+		# time to make a new dwg
+		rotated_dwg, ymin, xmin, ymax, xmax = getNewdwg(dwg,angle,colors["background"])
 
 		final_fairways, fw_minx, fw_miny, fw_maxx, fw_maxy = adjustRotatedFeatures(filtered_fairways, ymin, xmin)
 		final_tee_boxes, tb_minx, tb_miny, tb_maxx, tb_maxy = adjustRotatedFeatures(filtered_tee_boxes, ymin, xmin)
@@ -2194,28 +2873,31 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 		final_green_array, g_minx, g_miny, g_maxx, g_maxy = adjustRotatedFeatures(rotated_green_array, ymin, xmin)
 		# green_nds = np.int32([rotated_green_array]) # bug in fillPoly - needs explicit cast to 32bit
-		# cv2.fillPoly(image, green_nds, (155,242,161))
+		# cv2.fillPoly(dwg, green_nds, (155,242,161))
 
 		final_sand_traps, st_minx, st_miny, st_maxx, st_maxy = adjustRotatedFeatures(filtered_sand_traps, ymin, xmin)
 
 		adjusted_hole_array, n1, n2, n3, n4 = adjustRotatedFeatures([rotated_waypoints], ymin, xmin)
 
-
 		# we're going to draw everything in black and white this time for a different style
-		bw_green_image = rotated_image
-		bw_green_image[:] = (255,255,255)
+		#bw_green_dwg = rotated_dwg
+		#bw_green_dwg[:] = (255,255,255)
+        
+		drawFeatures(rotated_dwg, final_fairways, "#ebebeb", line_width=-1)
+		drawFeatures(rotated_dwg, final_tee_boxes, "#c3c3c3", line_width=-1)
+		drawFeatures(rotated_dwg, final_water_hazards, "#b4b4b4", line_width=-1)
+		drawFeatures(rotated_dwg, final_woods, "#b4b4b4", line_width=-1)
+		drawFeatures(rotated_dwg, final_green_array, "#6666e0", line_width=3)
+		drawFeatures(rotated_dwg, final_sand_traps, "#ebebeb", line_width=-1)
+		print(type(elevation_map), elevation_map)
 
-		drawFeatures(bw_green_image, final_fairways, (235, 235, 235), line=-1)
-		drawFeatures(bw_green_image, final_tee_boxes, (195, 195, 195),line=-1)
-		drawFeatures(bw_green_image, final_water_hazards, (180,180,180),line=-1)
-		drawFeatures(bw_green_image, final_woods, (180,180,180),line=-1)
-		drawFeatures(bw_green_image, final_green_array, (102, 102, 224),line=2) #line to demark green edge in B G R format
-		drawFeatures(bw_green_image, final_sand_traps, (210,210,210),line=-1)
 
 		# we also want to overlay a 3-yard grid to show how large the green is
 		# and to make it easier to figure out carry distances to greenside bunkers
-		green_grid = getGreenGrid(bw_green_image, adjusted_hole_array,ypp)
-
-		cv2.imwrite(("greens/" + file_name), green_grid)
+		print("# we also want to overlay a 3-yard grid to show how large the green is.This is the rotation angle:", angle)
+		green_grid_svg = getGreenGrid(adjusted_hole_array, ypp, rotated_dwg, hole_way_nodes, angle, elevation_map)
+		green_grid_svg.saveas(f"greens/{file_name.replace('.png', '.svg')}")
+  
+		#cv2.imwrite(("greens/" + file_name), green_grid)
 
 	return True

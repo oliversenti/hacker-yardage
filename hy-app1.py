@@ -78,17 +78,17 @@ def run_program():
         return False
 
     try:
-        colors = {
-            "fairways": hexToBGR(color_entries["Fairways"].get()),
-            "tee boxes": hexToBGR(color_entries["Tee Boxes"].get()),
-            "greens": hexToBGR(color_entries["Greens"].get()),
-            "background": hexToBGR(color_entries["Background"].get()),
-            "trees": hexToBGR(color_entries["Trees"].get()),
-            "water": hexToBGR(color_entries["Water"].get()),
-            "sand": hexToBGR(color_entries["Sand"].get()),
-            "text": hexToBGR(color_entries["Text & Labels"].get()),
-            "woods": hexToBGR(color_entries["Trees"].get())
-        }
+     colors = {
+        "fairways": color_entries["Fairways"].get(),
+        "tee boxes": color_entries["Tee Boxes"].get(),
+        "greens": color_entries["Greens"].get(),
+        "background": color_entries["Background"].get(),
+        "trees": color_entries["Trees"].get(),
+        "water": color_entries["Water"].get(),
+        "sand": color_entries["Sand"].get(),
+        "text": color_entries["Text & Labels"].get(),
+        "woods": color_entries["Trees"].get()  # Assuming this is the same as "trees"
+    }
     except ValueError:
         tk.messagebox.showerror(title="Error", message="Please make sure all colors are properly entered in hex format.")
         return False
@@ -211,8 +211,8 @@ frm_colorslabel.grid(row=0, column=0, columnspan=2, pady=5)
 lbl_colorslabel = tk.Label(master=frm_colorslabel, text="Customize colors:")
 lbl_colorslabel.pack()
 
-default_colors = {"Fairways": "#7A7A7D", "Tee Boxes": "#85D87E", "Greens": "#4B8552", "Background": "#FFFFFF",
-                  "Trees": "#99bfb0", "Water": "#BAFBEB", "Sand": "#EFE9BF", "Text & Labels": "#000000"}
+default_colors = {"Fairways": "#85d87e", "Tee Boxes": "#85d87e", "Greens": "#a1f29b", "Background": "#FFFFFF",
+                  "Trees": "#6b9e3f", "Water": "#8bb2f9", "Sand": "#ffeea1", "Text & Labels": "#000000"}
 
 color_entries = {}
 

@@ -1,3 +1,8 @@
+Alpine Resort Course A:
+  maxlat: '18.69910'
+  maxlon: '99.18148'
+  minlat: '18.68353'
+  minlon: '99.15341'
 Batam Hills:
   maxlat: '1.06703'
   maxlon: '103.96794'
@@ -13,6 +18,11 @@ Laguna National Singapore:
   maxlon: '103.9686'
   minlat: '1.3217'
   minlon: '103.9641'
+Palm Resort Senai Malaysia Cempaka Course:
+  maxlat: '1.65797'
+  maxlon: '103.65094'
+  minlat: '1.64710'
+  minlon: '103.64210'
 Palm Spring - Island Course:
   maxlat: '1.19251'
   maxlon: '104.09207'
@@ -33,3 +43,8 @@ Seletar Country Club Singapore:
   maxlon: '103.86754'
   minlat: '1.40384'
   minlon: '103.84923'
+Tanjong Puteri MY - Plantation Course:
+  maxlat: '1.45163'
+  maxlon: '103.95105'
+  minlat: '1.43979'
+  minlon: '103.93813'
