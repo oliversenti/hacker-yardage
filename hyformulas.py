@@ -2178,10 +2178,37 @@ def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px, g
             elevations,
             #levels=np.arange(np.min(elevations), np.max(elevations), contour_interval),
             levels=np.linspace(np.min(elevations), np.max(elevations), 20),
-            linewidths=0.5,
+            linewidths=0.8,
             colors='grey'
         )
+        
+        # 6. Draw contours with smoother Bezier curves into SVG
+        for collection in cs.collections:
+            for path in collection.get_paths():
+                vertices = path.vertices
+                if len(vertices) < 4:
+                    continue  # Need at least 4 points for cubic Bezier
+                
+                path_data = [f"M {vertices[0][0]},{vertices[0][1]}"]
+                
+                # Process in groups of 3 points for Bezier (control1, control2, end)
+                i = 1
+                while i + 2 < len(vertices):
+                    x1, y1 = vertices[i]
+                    x2, y2 = vertices[i+1]
+                    x3, y3 = vertices[i+2]
+                    path_data.append(f"C {x1},{y1} {x2},{y2} {x3},{y3}")
+                    i += 3
+                
+                # Optionally, handle remaining points with straight lines
+                for j in range(i, len(vertices)):
+                    xj, yj = vertices[j]
+                    path_data.append(f"L {xj},{yj}")
+                
+                # Add the path to the SVG drawing
+                dwg.add(dwg.path(d=" ".join(path_data), stroke="#e6e6e6", fill="none", stroke_width=0.3))
 
+        """     
         # 6. Draw contours manually into SVG
         for collection in cs.collections:
             for path in collection.get_paths():
@@ -2195,11 +2222,11 @@ def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px, g
                     path_data.append(f"L {x},{y}")
                 dwg.add(dwg.path(d=" ".join(path_data), stroke="grey", fill="none", stroke_width=0.5))
 
-        plt.close(fig)  # Cleanup Matplotlib figure
+        plt.close(fig)  # Cleanup Matplotlib figure """
 
         # 7. Create Arrow Marker
         # Define a smaller arrowhead marker
-        num_cells = 20
+        num_cells = 18
         arrow_length = 5 #svg units
         
         arrow_markers = {}
@@ -2287,14 +2314,14 @@ def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px, g
                     marker_end=marker.get_funciri()
                 ))
 
-                # Optional: add elevation text
+                """ # Optional: add elevation text
                 elev = grid_z[j, i]
                 dwg.add(dwg.text(
                     f"{elev:.2f}",
                     insert=(end_x + 2, end_y),
                     font_size="2px",
                     fill="black"
-                ))
+                )) """
 
     except Exception as e:
         print(f"Error while generating contours and arrows: {e}")
@@ -2507,7 +2534,7 @@ def add_svg_padding_and_save(dwg, file_name, top_y_pad, bottom_y_pad, left_x_pad
 
     try:
         padded_dwg = Drawing(
-            filename=f"{output_folder}/{file_name}.svg",
+            filename=f"{output_folder}/{file_name}",
             size=(f"{new_width}mm", f"{new_height}mm")
         )
 		#creates the final drawing box that should contain everything. 
@@ -2584,7 +2611,7 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 		# check if we are going to overwrite an existing dwg
 
-		file_name = "hole_" + str(hole_num) + ".svg.svg"
+		file_name = "hole_" + str(hole_num) + ".svg"
 
 		if not replace_existing and file_name in file_list:
 			print("Output file exists: skipping hole")
@@ -2596,7 +2623,7 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 			counter = 2
 
 			while file_name in new_file_list:
-				file_name = "hole_" + str(hole_num) + "_" + str(counter) + ".svg"
+				file_name = "hole_" + str(hole_num) + "_" + str(counter)
 				print(file_name)
 				counter += 1
 		# else:
