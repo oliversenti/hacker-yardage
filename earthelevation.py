@@ -40,7 +40,7 @@ def calcElevation(lat, lon):
         result = cursor.fetchone()
         print("elevation result:", result)
 
-        if result[0] > 0.0:
+        if result is not None and result[0] > 0.0:
             elevation = result[0]
             print(f"Cache hit for ({lat_str}, {lon_str}): {elevation} meters")
             return round(elevation, 2)

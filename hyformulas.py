@@ -353,8 +353,8 @@ def get_green_grid_points(way_nodes, spacing_yards=3):
     lon_min, lon_max = min(lons), max(lons)
     lat_min = float(lat_min) - (40 * spacing_deg)
     lat_max = float(lat_max) + (40 * spacing_deg)
-    lon_min = float(lon_min) - (4 * spacing_deg)
-    lon_max = float(lon_max) + (4 * spacing_deg)
+    lon_min = float(lon_min) - (40 * spacing_deg)
+    lon_max = float(lon_max) + (40 * spacing_deg)
 
     # Create grid
     lat_grid = np.arange(lat_min, lat_max, spacing_deg)
@@ -2088,44 +2088,32 @@ def drawGreenDistancesMax(dwg, adjusted_hole_array, feature_list, ypp, text_size
         drawDistanceText(dwg, distance, point, text_size, text_color)
 
 
-def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px, green_center_lat, green_center_lon, ypp, angle, contour_interval=1):
-    
+def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px, green_center_lat, green_center_lon, ypp, angle, contour_interval=20):
     from scipy.interpolate import griddata
-    try:
-        # 0. Bounding box (not strictly needed now but useful if you want limits later)
-        #green_min_lat, green_min_lon, green_max_lat, green_max_lon = getBoundingBoxLatLon(green_nodes)
+    import numpy as np
+    import math
+    import matplotlib.pyplot as plt
 
-        # 1. Helper: Convert lat/lon to SVG pixels
+    try:
         def latlon_to_svg(lat, lon, rotate=False):
-            print("this is the rotation angle:", angle)
             lat = float(lat)
             lon = float(lon)
-
             delta_lat = lat - float(green_center_lat)
             delta_lon = lon - float(green_center_lon)
 
-            # Degrees to meters
             delta_lat_m = delta_lat * 111000
             delta_lon_m = delta_lon * 111000 * math.cos(math.radians(float(green_center_lat)))
-
-            # Meters to yards
             delta_lat_yds = delta_lat_m * 1.09361
             delta_lon_yds = delta_lon_m * 1.09361
-            
-            # Rotate coordinates around (0,0) by angle (convert to radians)
-            angle_rad = np.radians(-(angle-90))
+            angle_rad = np.radians(-(angle - 90))
 
-            # Yards to pixels
             delta_x_px = delta_lon_yds / ypp
             delta_y_px = delta_lat_yds / ypp
-            
-            # SVG coordinates before rotation (note: y axis is downward in SVG)
+
             unrotated_x = x_center_px + delta_x_px
             unrotated_y = y_center_px - delta_y_px
-            
+
             if rotate:
-                # Apply rotation around center
-                print("rotating around center by angle:", angle_rad)
                 rotated_x, rotated_y = Rotate2D(
                     np.array([[unrotated_x, unrotated_y]]),
                     np.array([x_center_px, y_center_px]),
@@ -2135,196 +2123,127 @@ def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px, g
             else:
                 return unrotated_x, unrotated_y
 
-        # 2. Helper: Color based on slope magnitude
         def get_arrow_color(slope):
-            if slope <=0.5:
-                    return '#a1a1a1' #GREY 
-            elif slope <=1.0:
-                    return '#5ac5fa' #LIGHT BLUE
+            if slope <= 0.5:
+                return '#a1a1a1'
+            elif slope <= 1.0:
+                return '#5ac5fa'
             elif slope <= 2.0:
-                return '#3375f6' #BETWEEN 1 - 2 BLUE
+                return '#3375f6'
             elif slope <= 3.0:
-                return '#5fcb3f' # 2 - 3 LIGHT GREEN
-            elif slope <= 4.0: # 3 - 4 GREEN
+                return '#5fcb3f'
+            elif slope <= 4.0:
                 return '#3d8025'
             elif slope <= 5.0:
-                return '#dc3b2f' # 4 - 5 RED
+                return '#dc3b2f'
             elif slope <= 6.0:
-                return '#ee7a30' # 5 - 6  ORANGE
+                return '#ee7a30'
             elif slope <= 7.0:
-                return '#d8337e' # 6 - 7  PURPLE
+                return '#d8337e'
             else:
-                return "magenta"
+                return 'magenta'
 
-        # 3. Prepare points
-        points = []
-        elevations = []
-        for (lat, lon), elev in elevation_map.items():
-            svg_x, svg_y = latlon_to_svg(lat, lon, rotate=True)
-            points.append((svg_x, svg_y))
-            elevations.append(elev)
+        def chaikin_smooth(vertices, iterations=2):
+            for _ in range(iterations):
+                new_vertices = []
+                for i in range(len(vertices) - 1):
+                    p0 = vertices[i]
+                    p1 = vertices[i + 1]
+                    Q = 0.75 * p0 + 0.25 * p1
+                    R = 0.25 * p0 + 0.75 * p1
+                    new_vertices.extend([Q, R])
+                vertices = np.array(new_vertices)
+            return vertices
 
-        points = np.array(points)
-        elevations = np.array(elevations)
+        # Step 1: SVG coordinate transformation
+        lats, lons = zip(*elevation_map.keys())
+        svg_coords = [latlon_to_svg(lat, lon, rotate=True) for lat, lon in zip(lats, lons)]
+        elevations = list(elevation_map.values())
 
-        # 4. Triangulate for contour generation
-        tri = mtri.Triangulation(points[:, 0], points[:, 1])
+        # ✅ Add elevation as text to SVG
+        for (x, y), elev in zip(svg_coords, elevations):
+            dwg.add(dwg.text(f"{round(elev, 1)}", insert=(x, y), fill='black', font_size="1.5px"))
 
-        # 5. Generate Contours
+        # Step 2: Interpolation Grid
+        points = np.array(svg_coords)
+        values = np.array(elevations)
+        x_min, y_min = points.min(axis=0)
+        x_max, y_max = points.max(axis=0)
+        xx, yy = np.meshgrid(
+            np.linspace(x_min, x_max, 500),
+            np.linspace(y_min, y_max, 500)
+        )
+        grid_z = griddata(points, values, (xx, yy), method='cubic')
+
+        # Step 3: Generate contours with Chaikin smoothing
         fig, ax = plt.subplots()
         ax.set_axis_off()
-        cs = ax.tricontour(
-            tri,
-            elevations,
-            #levels=np.arange(np.min(elevations), np.max(elevations), contour_interval),
-            levels=np.linspace(np.min(elevations), np.max(elevations), 20),
-            linewidths=0.8,
-            colors='grey'
-        )
-        
-        # 6. Draw contours with smoother Bezier curves into SVG
+        levels = np.linspace(np.nanmin(grid_z), np.nanmax(grid_z), contour_interval)
+        cs = ax.contour(xx, yy, grid_z, levels=levels, colors='grey', linewidths=0.8)
+
         for collection in cs.collections:
             for path in collection.get_paths():
                 vertices = path.vertices
                 if len(vertices) < 4:
-                    continue  # Need at least 4 points for cubic Bezier
-                
-                path_data = [f"M {vertices[0][0]},{vertices[0][1]}"]
-                
-                # Process in groups of 3 points for Bezier (control1, control2, end)
+                    continue
+                smooth_vertices = chaikin_smooth(vertices)
+                path_data = [f"M {smooth_vertices[0][0]},{smooth_vertices[0][1]}"]
                 i = 1
-                while i + 2 < len(vertices):
-                    x1, y1 = vertices[i]
-                    x2, y2 = vertices[i+1]
-                    x3, y3 = vertices[i+2]
+                while i + 2 < len(smooth_vertices):
+                    x1, y1 = smooth_vertices[i]
+                    x2, y2 = smooth_vertices[i + 1]
+                    x3, y3 = smooth_vertices[i + 2]
                     path_data.append(f"C {x1},{y1} {x2},{y2} {x3},{y3}")
                     i += 3
-                
-                # Optionally, handle remaining points with straight lines
-                for j in range(i, len(vertices)):
-                    xj, yj = vertices[j]
+                for j in range(i, len(smooth_vertices)):
+                    xj, yj = smooth_vertices[j]
                     path_data.append(f"L {xj},{yj}")
-                
-                # Add the path to the SVG drawing
                 dwg.add(dwg.path(d=" ".join(path_data), stroke="#e6e6e6", fill="none", stroke_width=0.3))
+        plt.close(fig)
 
-        """     
-        # 6. Draw contours manually into SVG
-        for collection in cs.collections:
-            for path in collection.get_paths():
-                vertices = path.vertices
-                if len(vertices) < 2:
-                    continue
-                path_data = []
-                start_x, start_y = vertices[0]
-                path_data.append(f"M {start_x},{start_y}")
-                for x, y in vertices[1:]:
-                    path_data.append(f"L {x},{y}")
-                dwg.add(dwg.path(d=" ".join(path_data), stroke="grey", fill="none", stroke_width=0.5))
-
-        plt.close(fig)  # Cleanup Matplotlib figure """
-
-        # 7. Create Arrow Marker
-        # Define a smaller arrowhead marker
-        num_cells = 18
-        arrow_length = 5 #svg units
-        
+        # Step 4: Arrowhead marker defs
+        arrow_colors = ['#a1a1a1', '#5ac5fa', '#3375f6', '#5fcb3f', '#3d8025', '#dc3b2f', '#ee7a30', '#d8337e', 'magenta']
         arrow_markers = {}
-
-        for color in ['#a1a1a1','#5ac5fa','#3375f6','#5fcb3f','#3d8025','#dc3b2f','#ee7a30','#d8337e','magenta']:
+        for color in arrow_colors:
             marker = dwg.marker(
-                id=f'arrow-{color}',
-                insert=(0, 3),
-                size=(1.5, 1.5),
-                orient='auto',
-                markerUnits='userSpaceOnUse'
+                id=f'arrow-{color}', insert=(0, 3), size=(1.5, 1.5),
+                orient='auto', markerUnits='userSpaceOnUse'
             )
-            marker.add(dwg.path(d="M0,2 L0,4 L3,3 z", fill=color)) #draws the arrow tip like a
+            marker.add(dwg.path(d="M0,2 L0,4 L3,3 z", fill=color))
             dwg.defs.add(marker)
             arrow_markers[color] = marker
 
-		# step 8
-  		# Create regular grid in rotated SVG space
-        print("DEBUG:Now creating regular SVG grid.")
-        lats = [lat for lat, lon in elevation_map.keys()]
-        lons = [lon for lat, lon in elevation_map.keys()]
-        svg_coords = [latlon_to_svg(lat, lon, rotate=True) for lat, lon in zip(lats, lons)]
-
-        xs, ys = zip(*svg_coords)
-        x_min, x_max = min(xs), max(xs)
-        y_min, y_max = min(ys), max(ys)
-
+        # Step 5: Coarse grid for slope arrows
+        num_cells = 18
         x_grid = np.linspace(x_min, x_max, num_cells)
         y_grid = np.linspace(y_min, y_max, num_cells)
-        xx, yy = np.meshgrid(x_grid, y_grid)
+        xx_coarse, yy_coarse = np.meshgrid(x_grid, y_grid)
+        grid_z_coarse = griddata(points, values, (xx_coarse, yy_coarse), method='nearest')
+        dy, dx = np.gradient(grid_z_coarse, y_grid[1] - y_grid[0], x_grid[1] - x_grid[0])
 
-        # Build interpolator from known points
-        points = np.column_stack((xs, ys))
-        values = [elevation_map[(lat, lon)] for lat, lon in zip(lats, lons)]
-        grid_z = griddata(points, values, (xx, yy), method='nearest')
-        print("points shape:", points.shape)
-        print("points[:5]:", points[:5])
-        print("points x range:", points[:,0].min(), points[:,0].max())
-        print("points y range:", points[:,1].min(), points[:,1].max())
-        #grid_z = griddata(points, values, (xx, yy), method='cubic')
-
-        # Calculate gradients (slope direction)
-        dy, dx = np.gradient(grid_z, y_grid[1] - y_grid[0], x_grid[1] - x_grid[0])  # dZ/dY, dZ/dX
-        print("dx:\n", dx)
-        print("dy:\n", dy)
-        total = dx.size
-        nans = np.isnan(dx).sum() + np.isnan(dy).sum()
-        print(f"{nans}/{2*total} values are NaN in gradients")		
-
-        # Compute arrows based on gradients
-        print("DEBUG: now computing arrrows")
+        # Step 6: Draw slope arrows
+        arrow_length = 5
         for j in range(num_cells):
             for i in range(num_cells):
-                if np.isnan(dx[j, i]) or np.isnan(dy[j,i]):
+                if np.isnan(dx[j, i]) or np.isnan(dy[j, i]):
                     continue
-
                 gx, gy = dx[j, i], dy[j, i]
                 magnitude = np.hypot(gx, gy)
                 if magnitude < 0.00001:
-                    print("skipping flat")
-                    continue  # skip flat
-
-                # Normalize and scale for SVG arrow
+                    continue
                 gx /= magnitude
                 gy /= magnitude
-
-                start_x, start_y = xx[j, i], yy[j, i]
+                start_x, start_y = xx_coarse[j, i], yy_coarse[j, i]
                 end_x = start_x - arrow_length * gx
                 end_y = start_y - arrow_length * gy
-                
-                # Determine arrow color
-                print("slope:", magnitude)
                 color = get_arrow_color(magnitude * 100)
-                marker = arrow_markers[color]
-                print("now drawing the arrow lines")
-                print(f"start_x: {start_x}, start_y: {start_y}, end_x: {end_x}, end_y: {end_y}")
-                print(f"color: {color}")
-                print(f"marker funciri: {marker.get_funciri()}")
-
                 dwg.add(dwg.line(
-                    start=(start_x, start_y),
-                    end=(end_x, end_y),
-                    stroke=color,
-                    stroke_width=0.5, #arrow stroke width
-                    marker_end=marker.get_funciri()
+                    start=(start_x, start_y), end=(end_x, end_y),
+                    stroke=color, stroke_width=0.4,
+                    marker_end=arrow_markers[color].get_funciri()
                 ))
-
-                """ # Optional: add elevation text
-                elev = grid_z[j, i]
-                dwg.add(dwg.text(
-                    f"{elev:.2f}",
-                    insert=(end_x + 2, end_y),
-                    font_size="2px",
-                    fill="black"
-                )) """
-
     except Exception as e:
-        print(f"Error while generating contours and arrows: {e}")
+        print("ERROR in generate_contours_and_arrows:", str(e))
 
 
 # draw a three-yard grid over the green dwg that is aligned with the center of the green
