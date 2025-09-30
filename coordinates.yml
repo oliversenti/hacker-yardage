@@ -8,6 +8,11 @@ Batam Hills:
   maxlon: '103.96794'
   minlat: '1.05349'
   minlon: '103.94818'
+Indah Puri Batam:
+  maxlat: '1.14155'
+  maxlon: '103.96856'
+  minlat: '1.13006'
+  minlon: '103.95845'
 Keppel Club Singapore:
   maxlat: '1.3520'
   maxlon: '103.8207'

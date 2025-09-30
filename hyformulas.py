@@ -40,7 +40,7 @@ def hexToBGR(hex):
 	return (b, g, r)
 
 
-# given a list of coordinates, calculate the min and max longitude and latitude
+# given a list of coordinates, calculate the min and max longitude and latitude 
 
 def getBoundingBoxLatLon(nodes):
 
@@ -62,7 +62,7 @@ def getBoundingBoxLatLon(nodes):
 
 def getOSMGolfWays(bottom_lat, left_lon, top_lat, right_lon, printf=print):
 
-	op = overpy.Overpass()
+	op = overpy.Overpass(url="https://overpass.private.coffee/api/interpreter")
 
 	# create the coordinate string for our request - order is South, West, North, East
 	coord_string = str(bottom_lat) + "," + str(left_lon) + \
@@ -83,7 +83,7 @@ def getOSMGolfWays(bottom_lat, left_lon, top_lat, right_lon, printf=print):
 def getOSMGolfData(bottom_lat, left_lon, top_lat, right_lon, printf=print):
 
 	# optional replacement url if servers are busy - url="https://overpass.kumi.systems/api/interpreter"
-	op = overpy.Overpass()
+	op = overpy.Overpass(url="https://overpass.private.coffee/api/interpreter")
 
 	# create the coordinate string for our request - order is South, West, North, East
 	coord_string = str(bottom_lat) + "," + str(left_lon) + \
@@ -241,6 +241,9 @@ def generateSVG(latmin, lonmin, latmax, lonmax, lat_degree_distance, lon_degree_
     
     # Add background rectangle
     dwg.add(dwg.rect(insert=(0, 0), size=(x_dim, y_dim), fill="purple"))
+    # Create a group for all features. This is to ensure that we can crop the paths and only show what's important
+    features_group = dwg.g(id="features")
+    dwg.add(features_group)
 
     return dwg, x_dim, y_dim, ypp
 
@@ -539,7 +542,7 @@ def categorizeWays(hole_result, hole_minlat, hole_minlon, hole_maxlat, hole_maxl
      
 
 #draw features with SVG instead of openCV raster image. 
-def drawFeatureSVG(dwg, array, color, fill, line_width=1, smoothness=1.0, samples=1000):
+def drawFeatureSVG(features_group, array, color, fill, line_width=1, smoothness=1.0, samples=1000):
     # Convert the input array to numpy array
     nds = np.array(array)
     #print(f"[DEBUG]: Input array: {array}")  # Debugging line
@@ -569,10 +572,10 @@ def drawFeatureSVG(dwg, array, color, fill, line_width=1, smoothness=1.0, sample
     #print(f"[DEBUG]: Path data: {path_data}")  # Debugging line
 
     # Create the path element
-    path = dwg.path(d=path_data, stroke=stroke_color, fill=color if fill else "none", stroke_width=line_width)
+    path = svgwrite.path.Path(d=path_data, stroke=stroke_color, fill=color if fill else "none", stroke_width=line_width)
     
     # Add the path element to the SVG
-    dwg.add(path)
+    features_group.add(path)
     
     # Print out the entire SVG content for inspection
     #print("[DEBUG]: ", dwg.tostring())  # Log the full SVG content
@@ -642,7 +645,7 @@ def wavy_tree_path(size, wave_count=8, inner=False):
     path.push("Z")
     return path
 
-def drawTrees(dwg, feature_list, stroke_color="#228B22"):  # Default color is a forest green
+def drawTrees(features_group, feature_list, stroke_color="#228B22"):  # Default color is a forest green
 
     #print("[DEBUG]: tree feature list", feature_list)
     trunk_color="#6D4C41"
@@ -676,7 +679,7 @@ def drawTrees(dwg, feature_list, stroke_color="#228B22"):  # Default color is a 
         tree_group.add(trunk)
         
         #Add the central trunk circle (adjust position based on size)
-        trunk = dwg.circle(center=(size//2, size//2), r=size//33, fill=trunk_color)
+        trunk = svgwrite.shapes.Circle(center=(size//2, size//2), r=size//33, fill=trunk_color)
         
 
          # Add to group
@@ -687,7 +690,7 @@ def drawTrees(dwg, feature_list, stroke_color="#228B22"):  # Default color is a 
         tree_group.translate(x - size // 2, y - size // 2)
         
         # Add elements to the drawing
-        dwg.add(tree_group)
+        features_group.add(tree_group)
 
 
 # when the features were rotated, their coordinates could have been outside our dwg boundaries
@@ -2605,6 +2608,8 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 		# create a new, rotated base dwg to work with
 		rotated_dwg, ymin, xmin, ymax, xmax = getNewdwg(dwg,angle,colors["background"])
+		#create new features group
+		features_group = rotated_dwg.g(id="features")
 
 
 		# we need to adjust all our rotated features
@@ -2628,16 +2633,18 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 		# finally, we can draw all of the features on our dwg (with specific colors for each)
 
-		drawFeatures(rotated_dwg, final_fairways, colors["fairways"], line_width=1)
-		drawFeatures(rotated_dwg, final_tee_boxes, colors["tee boxes"], line_width=-1)
-		drawFeatures(rotated_dwg, final_water_hazards, colors["water"], line_width=-1, feature_type="water")
-		drawFeatures(rotated_dwg, final_woods, colors["woods"], line_width=-1, feature_type="woods")
-		drawFeatures(rotated_dwg, final_green_array, colors["greens"], line_width=1)
+		drawFeatures(features_group, final_fairways, colors["fairways"], line_width=1)
+		drawFeatures(features_group, final_tee_boxes, colors["tee boxes"], line_width=-1)
+		drawFeatures(features_group, final_water_hazards, colors["water"], line_width=-1, feature_type="water")
+		drawFeatures(features_group, final_woods, colors["woods"], line_width=-1, feature_type="woods")
+		drawFeatures(features_group, final_green_array, colors["greens"], line_width=1)
 
 		# drawing the sand traps and trees last so they aren't overlapped by fairways, etc.
 		print("drawing sand features")
-		drawFeatures(rotated_dwg, final_sand_traps, colors["sand"], line_width=-1, feature_type="sand")
-		drawTrees(rotated_dwg, final_trees, colors["trees"])
+		drawFeatures(features_group, final_sand_traps, colors["sand"], line_width=-1, feature_type="sand")
+		drawTrees(features_group, final_trees, colors["trees"])
+        # Add the features group to the SVG
+		rotated_dwg.add(features_group)
 
 
 		# now we need to pad or crop the dwg to get a consistent aspect ratio
@@ -2810,6 +2817,7 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 		# time to make a new dwg
 		rotated_dwg, ymin, xmin, ymax, xmax = getNewdwg(dwg,angle,colors["background"])
+		features_group = rotated_dwg.g(id="features")       
 
 		final_fairways, fw_minx, fw_miny, fw_maxx, fw_maxy = adjustRotatedFeatures(filtered_fairways, ymin, xmin)
 		final_tee_boxes, tb_minx, tb_miny, tb_maxx, tb_maxy = adjustRotatedFeatures(filtered_tee_boxes, ymin, xmin)
@@ -2829,14 +2837,16 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 		#bw_green_dwg = rotated_dwg
 		#bw_green_dwg[:] = (255,255,255)
         
-		drawFeatures(rotated_dwg, final_fairways, "#ebebeb", line_width=-1)
-		drawFeatures(rotated_dwg, final_tee_boxes, "#c3c3c3", line_width=-1)
-		drawFeatures(rotated_dwg, final_water_hazards, "#b4b4b4", line_width=-1)
-		drawFeatures(rotated_dwg, final_woods, "#b4b4b4", line_width=-1)
-		drawFeatures(rotated_dwg, final_green_array, "#6666e0", line_width=3)
-		drawFeatures(rotated_dwg, final_sand_traps, "#ebebeb", line_width=-1)
+		drawFeatures(features_group, final_fairways, "#ebebeb", line_width=-1)
+		drawFeatures(features_group, final_tee_boxes, "#c3c3c3", line_width=-1)
+		drawFeatures(features_group, final_water_hazards, "#b4b4b4", line_width=-1)
+		drawFeatures(features_group, final_woods, "#b4b4b4", line_width=-1)
+		drawFeatures(features_group, final_green_array, "#6666e0", line_width=3)
+		drawFeatures(features_group, final_sand_traps, "#ebebeb", line_width=-1)
 		print(type(elevation_map), elevation_map)
 
+		# Add the features group to the SVG
+		rotated_dwg.add(features_group)
 
 		# we also want to overlay a 3-yard grid to show how large the green is
 		# and to make it easier to figure out carry distances to greenside bunkers
