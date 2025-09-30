@@ -216,6 +216,25 @@ def rgb_to_hex(rgb_tuple):
 
 # create a blank dwg of the appropriate size to use in drawing the hole
 
+def add_to_features_group(dwg, element, *, root=False):
+    """Add an SVG element to the drawing, respecting the features group.
+
+    When ``generateSVG`` is used to create a drawing, all feature geometry
+    should live inside the ``features_group`` so it can be clipped to the
+    background rectangle.  This helper routes additions to that group while
+    still allowing callers to explicitly add elements to the SVG root when
+    necessary.
+    """
+
+    if root or not hasattr(dwg, "_features_group"):
+        add_method = getattr(dwg, "_root_add", None)
+        if add_method is not None:
+            return add_method(element)
+        return dwg.add(element)
+
+    return dwg._features_group.add(element)
+
+
 def generateSVG(latmin, lonmin, latmax, lonmax, lat_degree_distance, lon_degree_distance, bg_color):
     lat_distance = (latmax - latmin) * lat_degree_distance
     lon_distance = (lonmax - lonmin) * lon_degree_distance
@@ -238,9 +257,26 @@ def generateSVG(latmin, lonmin, latmax, lonmax, lat_degree_distance, lon_degree_
 
     # SVG dimensions in pixels (can be styled in px or user units)
     dwg = svgwrite.Drawing(size=(x_dim, y_dim), viewBox=f"0 0 {x_dim} {y_dim}")
-    
+
+    # Preserve the original ``add`` method so we can still target the root.
+    root_add = dwg.add
+
     # Add background rectangle
-    dwg.add(dwg.rect(insert=(0, 0), size=(x_dim, y_dim), fill="purple"))
+    background_rect = dwg.rect(
+        insert=(0, 0), size=(x_dim, y_dim), fill=bg_color, id="background_rect"
+    )
+    root_add(background_rect)
+
+    # Clip any feature content to the background rectangle
+    clip_id = "features_clip"
+    clip_path = dwg.defs.add(dwg.clipPath(id=clip_id))
+    clip_path.add(dwg.rect(insert=(0, 0), size=(x_dim, y_dim)))
+
+    features_group = dwg.g(id="features_group", clip_path=f"url(#{clip_id})")
+    root_add(features_group)
+
+    dwg._root_add = root_add
+    dwg._features_group = features_group
 
     return dwg, x_dim, y_dim, ypp
 
@@ -572,7 +608,7 @@ def drawFeatureSVG(dwg, array, color, fill, line_width=1, smoothness=1.0, sample
     path = dwg.path(d=path_data, stroke=stroke_color, fill=color if fill else "none", stroke_width=line_width)
     
     # Add the path element to the SVG
-    dwg.add(path)
+    add_to_features_group(dwg, path)
     
     # Print out the entire SVG content for inspection
     #print("[DEBUG]: ", dwg.tostring())  # Log the full SVG content
@@ -687,7 +723,7 @@ def drawTrees(dwg, feature_list, stroke_color="#228B22"):  # Default color is a 
         tree_group.translate(x - size // 2, y - size // 2)
         
         # Add elements to the drawing
-        dwg.add(tree_group)
+        add_to_features_group(dwg, tree_group)
 
 
 # when the features were rotated, their coordinates could have been outside our dwg boundaries
@@ -1267,7 +1303,7 @@ def drawMarkerPoints(dwg, tee_box_points, text_size, text_color):
     # Loop through the points and draw circles using SVG methods
     for point in tee_box_points:
         # Draw a circle at each point
-        dwg.add(dwg.circle(
+        add_to_features_group(dwg, dwg.circle(
             center=(int(point[0]), int(point[1])),  # Position of the circle
             r=int(0.25*text_size),  # Radius of the circle, adjusted with text_size
             fill=text_color  # Fill color
@@ -1322,7 +1358,7 @@ def drawCarry(dwg, green_center, carrypoint, tee_box_points, ypp, text_size, tex
 
     # draw each distance as text on the SVG canvas
     for distance in dist_list:
-        dwg.add(dwg.text(
+        add_to_features_group(dwg, dwg.text(
             str(distance),
             insert=(x, y),
             font_size=text_size, #text_size,
@@ -1333,7 +1369,7 @@ def drawCarry(dwg, green_center, carrypoint, tee_box_points, ypp, text_size, tex
         y += yinc
 
     # mark the carry point as a circle
-    dwg.add(dwg.circle(
+    add_to_features_group(dwg, dwg.circle(
         center=(carrypoint[0], carrypoint[1]),
         r=int(0.25*text_size),
         fill=text_color
@@ -1565,7 +1601,7 @@ def drawDistanceText(dwg, distance, point, text_size, text_color):
     y = int(point[1]+(0.4 *text_size))  # You can fine-tune the vertical offset
 
     # Add text to the SVG drawing
-    dwg.add(dwg.text(
+    add_to_features_group(dwg, dwg.text(
         str(distance),
         insert=(x, y),
         font_size=f"{text_size}px",
@@ -1657,7 +1693,7 @@ def draw_ellipse_arc(dwg, center, radius, start_angle, end_angle, angle, color, 
 
     # Path data
     path_data = f"M {x_start},{y_start} A {rx},{ry} 0 {large_arc},{sweep_flag} {x_end},{y_end}"
-    dwg.add(dwg.path(
+    add_to_features_group(dwg, dwg.path(
         d=path_data,
         fill="none",
         stroke=color,
@@ -1818,7 +1854,7 @@ def drawGreenDistancesAnyWaypoint(dwg, adjusted_hole_array, ypp, draw_dist, text
 
 
 def draw_polygon(dwg, points, stroke_color="#000000", stroke_width=2, fill="none"):
-    dwg.add(dwg.polygon(
+    add_to_features_group(dwg, dwg.polygon(
         points=points,
         stroke=stroke_color,
         stroke_width=stroke_width,
@@ -1826,7 +1862,7 @@ def draw_polygon(dwg, points, stroke_color="#000000", stroke_width=2, fill="none
     ))
     
 def fill_polygon(dwg, points, fill_color="#000000"):
-    dwg.add(dwg.polygon(
+    add_to_features_group(dwg, dwg.polygon(
         points=points,
         fill=fill_color,
         stroke="none"
@@ -2008,10 +2044,18 @@ def drawGreenDistancesTree(dwg, adjusted_hole_array, tree_list, ypp, text_size, 
         label_position = (point[0] - 100 - label_width, point[1]) if right else (point[0] + 100, point[1]) #the labels position if left or right
 
         # Draw the line from the tree to the label position
-        dwg.add(dwg.line(start=(point[0], point[1]), end=(label_position[0], label_position[1]), stroke=text_color, stroke_width=3))
+        add_to_features_group(
+            dwg,
+            dwg.line(
+                start=(point[0], point[1]),
+                end=(label_position[0], label_position[1]),
+                stroke=text_color,
+                stroke_width=3,
+            ),
+        )
 
         # Draw the distance text near the label at about 1/3 of the text size from the end of the line
-        dwg.add(dwg.text(
+        add_to_features_group(dwg, dwg.text(
             str(distance),
             insert=(label_position[0], label_position[1]),#at the end of the line
             font_size=f"{text_size}px",
@@ -2162,7 +2206,15 @@ def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px, g
 
         # ✅ Add elevation as text to SVG
         for (x, y), elev in zip(svg_coords, elevations):
-            dwg.add(dwg.text(f"{round(elev, 1)}", insert=(x, y), fill='black', font_size="1.5px"))
+            add_to_features_group(
+                dwg,
+                dwg.text(
+                    f"{round(elev, 1)}",
+                    insert=(x, y),
+                    fill='black',
+                    font_size="1.5px",
+                ),
+            )
 
         # Step 2: Interpolation Grid
         points = np.array(svg_coords)
@@ -2198,7 +2250,15 @@ def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px, g
                 for j in range(i, len(smooth_vertices)):
                     xj, yj = smooth_vertices[j]
                     path_data.append(f"L {xj},{yj}")
-                dwg.add(dwg.path(d=" ".join(path_data), stroke="#e6e6e6", fill="none", stroke_width=0.3))
+                add_to_features_group(
+                    dwg,
+                    dwg.path(
+                        d=" ".join(path_data),
+                        stroke="#e6e6e6",
+                        fill="none",
+                        stroke_width=0.3,
+                    ),
+                )
         plt.close(fig)
 
         # Step 4: Arrowhead marker defs
@@ -2237,11 +2297,16 @@ def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px, g
                 end_x = start_x - arrow_length * gx
                 end_y = start_y - arrow_length * gy
                 color = get_arrow_color(magnitude * 100)
-                dwg.add(dwg.line(
-                    start=(start_x, start_y), end=(end_x, end_y),
-                    stroke=color, stroke_width=0.4,
-                    marker_end=arrow_markers[color].get_funciri()
-                ))
+                add_to_features_group(
+                    dwg,
+                    dwg.line(
+                        start=(start_x, start_y),
+                        end=(end_x, end_y),
+                        stroke=color,
+                        stroke_width=0.4,
+                        marker_end=arrow_markers[color].get_funciri(),
+                    ),
+                )
     except Exception as e:
         print("ERROR in generate_contours_and_arrows:", str(e))
 
@@ -2287,22 +2352,63 @@ def getGreenGrid(adjusted_hole_array, ypp, dwg, holeway_nodes, angle, elevation_
 
     # Draw vertical grid lines (right of center)
     for gx in range(xmin, xmax, int(spacing)):
-        dwg.add(dwg.line(start=(gx, ymin), end=(gx, ymax), stroke=grid_color, stroke_width=line_thickness))
+        add_to_features_group(
+            dwg,
+            dwg.line(
+                start=(gx, ymin),
+                end=(gx, ymax),
+                stroke=grid_color,
+                stroke_width=line_thickness,
+            ),
+        )
 
     # Draw vertical grid lines (left of center)
     for gx in range(xmin - int(spacing), x_grid_min - 1, -int(spacing)):
-    	dwg.add(dwg.line(start=(gx, ymin), end=(gx, ymax), stroke=grid_color, stroke_width=line_thickness))
+        add_to_features_group(
+            dwg,
+            dwg.line(
+                start=(gx, ymin),
+                end=(gx, ymax),
+                stroke=grid_color,
+                stroke_width=line_thickness,
+            ),
+        )
 
     # Draw horizontal grid lines (below center)
     for gy in range(ymin, ymax, int(spacing)):
-        dwg.add(dwg.line(start=(xmin, gy), end=(xmax, gy), stroke=grid_color, stroke_width=line_thickness))
+        add_to_features_group(
+            dwg,
+            dwg.line(
+                start=(xmin, gy),
+                end=(xmax, gy),
+                stroke=grid_color,
+                stroke_width=line_thickness,
+            ),
+        )
 
     # Draw horizontal grid lines (above center)
     for gy in range(ymin - int(spacing), 0, -int(spacing)):
-        dwg.add(dwg.line(start=(xmin, gy), end=(xmax, gy), stroke=grid_color, stroke_width=line_thickness))
+        add_to_features_group(
+            dwg,
+            dwg.line(
+                start=(xmin, gy),
+                end=(xmax, gy),
+                stroke=grid_color,
+                stroke_width=line_thickness,
+            ),
+        )
 
     # Draw the border around the cropped grid area (using a rectangle)
-    dwg.add(dwg.rect(insert=(xmin, ymin), size=(xmax - xmin, ymax - ymin), stroke=grid_color, stroke_width=2, fill="none"))
+    add_to_features_group(
+        dwg,
+        dwg.rect(
+            insert=(xmin, ymin),
+            size=(xmax - xmin, ymax - ymin),
+            stroke=grid_color,
+            stroke_width=2,
+            fill="none",
+        ),
+    )
     
     
     # Define clipping path ID
@@ -2316,7 +2422,7 @@ def getGreenGrid(adjusted_hole_array, ypp, dwg, holeway_nodes, angle, elevation_
     clipped_group = dwg.g(clip_path=f"url(#{clip_id})")
 
     # Finally, add the clipped group to the main drawing
-    dwg.add(clipped_group)
+    add_to_features_group(dwg, clipped_group)
     
      # If elevation data is available, add contour lines and arrow
     if elevation_map:
@@ -2379,12 +2485,18 @@ def getFixedSizedwg(rotated_dwg, final_green_array, adjusted_hole_array, ypp, ta
     # Add transformed green polygons (assumes the green is a polygon with multiple points)
     for feature in fixed_green_array:
         points = [(point[0], point[1]) for point in feature]
-        dwg.add(dwg.polygon(points=points, fill="green", stroke="black", stroke_width=2))
+        add_to_features_group(
+            dwg,
+            dwg.polygon(points=points, fill="green", stroke="black", stroke_width=2),
+        )
     
     # Add transformed hole locations (represented as circles with a small radius)
     hole_radius = 5
     for hole in fixed_hole_array:
-        dwg.add(dwg.circle(center=(hole[0], hole[1]), r=hole_radius, fill="black"))
+        add_to_features_group(
+            dwg,
+            dwg.circle(center=(hole[0], hole[1]), r=hole_radius, fill="black"),
+        )
     
     return dwg, fixed_green_array, fixed_hole_array, fixed_ypp
 
