@@ -2091,162 +2091,203 @@ def drawGreenDistancesMax(dwg, adjusted_hole_array, feature_list, ypp, text_size
         drawDistanceText(dwg, distance, point, text_size, text_color)
 
 
-def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px, green_center_lat, green_center_lon, ypp, angle, contour_interval=20):
+def generate_contours_and_arrows(elevation_map, dwg, x_center_px, y_center_px,
+                                 green_center_lat, green_center_lon, ypp, angle,
+                                 contour_interval=20):
+    """
+    Draws smoothed contour lines and slope arrows on the SVG.
+    - Uses cs.allsegs instead of cs.collections for compatibility.
+    - Sanitizes arrow marker IDs (no '#' in ids).
+    """
     from scipy.interpolate import griddata
     import numpy as np
     import math
     import matplotlib.pyplot as plt
 
     try:
+        # --- Helpers ---
         def latlon_to_svg(lat, lon, rotate=False):
-            lat = float(lat)
-            lon = float(lon)
-            delta_lat = lat - float(green_center_lat)
-            delta_lon = lon - float(green_center_lon)
+            lat = float(lat); lon = float(lon)
+            dlat = lat - float(green_center_lat)
+            dlon = lon - float(green_center_lon)
 
-            delta_lat_m = delta_lat * 111000
-            delta_lon_m = delta_lon * 111000 * math.cos(math.radians(float(green_center_lat)))
-            delta_lat_yds = delta_lat_m * 1.09361
-            delta_lon_yds = delta_lon_m * 1.09361
-            angle_rad = np.radians(-(angle - 90))
+            dlat_m = dlat * 111_000.0
+            dlon_m = dlon * 111_000.0 * math.cos(math.radians(float(green_center_lat)))
 
-            delta_x_px = delta_lon_yds / ypp
-            delta_y_px = delta_lat_yds / ypp
+            dlat_yd = dlat_m * 1.09361
+            dlon_yd = dlon_m * 1.09361
 
-            unrotated_x = x_center_px + delta_x_px
-            unrotated_y = y_center_px - delta_y_px
+            # yards-per-pixel scaling (your ypp = yards-per-pixel)
+            dx_px = dlon_yd / ypp
+            dy_px = dlat_yd / ypp
+
+            ux = x_center_px + dx_px
+            uy = y_center_px - dy_px  # SVG y grows downward
 
             if rotate:
-                rotated_x, rotated_y = Rotate2D(
-                    np.array([[unrotated_x, unrotated_y]]),
-                    np.array([x_center_px, y_center_px]),
-                    angle_rad
-                )[0]
-                return rotated_x, rotated_y
-            else:
-                return unrotated_x, unrotated_y
+                ang = np.radians(-(angle - 90))
+                # Rotate2D: expects Nx2 array and a pivot; assumed available in your codebase
+                rx, ry = Rotate2D(np.array([[ux, uy]]),
+                                  np.array([x_center_px, y_center_px]),
+                                  ang)[0]
+                return rx, ry
+            return ux, uy
 
-        def get_arrow_color(slope):
-            if slope <= 0.5:
-                return '#a1a1a1'
-            elif slope <= 1.0:
-                return '#5ac5fa'
-            elif slope <= 2.0:
-                return '#3375f6'
-            elif slope <= 3.0:
-                return '#5fcb3f'
-            elif slope <= 4.0:
-                return '#3d8025'
-            elif slope <= 5.0:
-                return '#dc3b2f'
-            elif slope <= 6.0:
-                return '#ee7a30'
-            elif slope <= 7.0:
-                return '#d8337e'
-            else:
-                return 'magenta'
+        def get_arrow_color(slope_percent):
+            # slope_percent ~ gradient * 100
+            if slope_percent <= 0.5:  return '#a1a1a1'
+            if slope_percent <= 1.0:  return '#5ac5fa'
+            if slope_percent <= 2.0:  return '#3375f6'
+            if slope_percent <= 3.0:  return '#5fcb3f'
+            if slope_percent <= 4.0:  return '#3d8025'
+            if slope_percent <= 5.0:  return '#dc3b2f'
+            if slope_percent <= 6.0:  return '#ee7a30'
+            if slope_percent <= 7.0:  return '#d8337e'
+            return 'magenta'
 
         def chaikin_smooth(vertices, iterations=2):
+            v = np.asarray(vertices)
             for _ in range(iterations):
-                new_vertices = []
-                for i in range(len(vertices) - 1):
-                    p0 = vertices[i]
-                    p1 = vertices[i + 1]
-                    Q = 0.75 * p0 + 0.25 * p1
-                    R = 0.25 * p0 + 0.75 * p1
-                    new_vertices.extend([Q, R])
-                vertices = np.array(new_vertices)
-            return vertices
+                if len(v) < 3:
+                    break
+                nv = []
+                for i in range(len(v)-1):
+                    p0 = v[i]; p1 = v[i+1]
+                    Q = 0.75*p0 + 0.25*p1
+                    R = 0.25*p0 + 0.75*p1
+                    nv.extend([Q, R])
+                v = np.array(nv)
+            return v
 
-        # Step 1: SVG coordinate transformation
+        # --- 1) Prepare points ---
         lats, lons = zip(*elevation_map.keys())
+        elevations = np.array(list(elevation_map.values()), dtype=float)
+
         svg_coords = [latlon_to_svg(lat, lon, rotate=True) for lat, lon in zip(lats, lons)]
-        elevations = list(elevation_map.values())
+        points = np.array(svg_coords, dtype=float)
 
-        # ✅ Add elevation as text to SVG
-        for (x, y), elev in zip(svg_coords, elevations):
-            dwg.add(dwg.text(f"{round(elev, 1)}", insert=(x, y), fill='black', font_size="1.5px"))
+        # Optional: label elevations at sample points
+        for (x, y), elev in zip(points, elevations):
+            dwg.add(dwg.text(f"{round(float(elev), 1)}",
+                             insert=(x, y),
+                             fill='black', font_size="1.5px"))
 
-        # Step 2: Interpolation Grid
-        points = np.array(svg_coords)
-        values = np.array(elevations)
+        # --- 2) Interpolation grid ---
         x_min, y_min = points.min(axis=0)
         x_max, y_max = points.max(axis=0)
+
+        # 500x500 is heavy; adjust if needed
         xx, yy = np.meshgrid(
             np.linspace(x_min, x_max, 500),
             np.linspace(y_min, y_max, 500)
         )
-        grid_z = griddata(points, values, (xx, yy), method='cubic')
+        grid_z = griddata(points, elevations, (xx, yy), method='cubic')
 
-        # Step 3: Generate contours with Chaikin smoothing
+        # Handle NaNs from cubic interpolation by infilling with nearest as a fallback
+        if np.isnan(grid_z).any():
+            grid_z_near = griddata(points, elevations, (xx, yy), method='nearest')
+            grid_z = np.where(np.isnan(grid_z), grid_z_near, grid_z)
+
+        # Guard: if still all-NaN or flat, bail gracefully
+        if not np.isfinite(grid_z).any() or np.nanmin(grid_z) == np.nanmax(grid_z):
+            print("[WARN] Contours skipped: insufficient elevation variance or interpolation failed.")
+            return
+
+        # --- 3) Contours (iterate via allsegs, not collections) ---
         fig, ax = plt.subplots()
         ax.set_axis_off()
-        levels = np.linspace(np.nanmin(grid_z), np.nanmax(grid_z), contour_interval)
+
+        # Build an appropriate set of levels
+        vmin = float(np.nanmin(grid_z))
+        vmax = float(np.nanmax(grid_z))
+        # contour_interval here means "number of levels"
+        levels = np.linspace(vmin, vmax, int(contour_interval))
+
         cs = ax.contour(xx, yy, grid_z, levels=levels, colors='grey', linewidths=0.8)
 
-        for collection in cs.collections:
-            for path in collection.get_paths():
-                vertices = path.vertices
-                if len(vertices) < 4:
+        # cs.allsegs is a list of lists of (N_i x 2) arrays per level
+        for level_segs in cs.allsegs:
+            for seg in level_segs:
+                # seg is an Nx2 array of vertices
+                if seg is None or len(seg) < 4:
                     continue
-                smooth_vertices = chaikin_smooth(vertices)
-                path_data = [f"M {smooth_vertices[0][0]},{smooth_vertices[0][1]}"]
+                smooth_vertices = chaikin_smooth(seg)
+                if len(smooth_vertices) < 2:
+                    continue
+
+                # Build cubic-bezier-ish SVG path: start M, then C in groups of 3 points
+                path_cmds = [f"M {smooth_vertices[0][0]},{smooth_vertices[0][1]}"]
                 i = 1
                 while i + 2 < len(smooth_vertices):
                     x1, y1 = smooth_vertices[i]
-                    x2, y2 = smooth_vertices[i + 1]
-                    x3, y3 = smooth_vertices[i + 2]
-                    path_data.append(f"C {x1},{y1} {x2},{y2} {x3},{y3}")
+                    x2, y2 = smooth_vertices[i+1]
+                    x3, y3 = smooth_vertices[i+2]
+                    path_cmds.append(f"C {x1},{y1} {x2},{y2} {x3},{y3}")
                     i += 3
+                # leftover vertices as straight segments
                 for j in range(i, len(smooth_vertices)):
                     xj, yj = smooth_vertices[j]
-                    path_data.append(f"L {xj},{yj}")
-                dwg.add(dwg.path(d=" ".join(path_data), stroke="#e6e6e6", fill="none", stroke_width=0.3))
+                    path_cmds.append(f"L {xj},{yj}")
+
+                dwg.add(dwg.path(d=" ".join(path_cmds),
+                                 stroke="#e6e6e6", fill="none", stroke_width=0.3))
         plt.close(fig)
 
-        # Step 4: Arrowhead marker defs
-        arrow_colors = ['#a1a1a1', '#5ac5fa', '#3375f6', '#5fcb3f', '#3d8025', '#dc3b2f', '#ee7a30', '#d8337e', 'magenta']
+        # --- 4) Arrowhead marker defs (sanitize IDs) ---
+        arrow_colors = ['#a1a1a1', '#5ac5fa', '#3375f6', '#5fcb3f', '#3d8025',
+                        '#dc3b2f', '#ee7a30', '#d8337e', 'magenta']
         arrow_markers = {}
         for color in arrow_colors:
+            safe_id = f"arrow-{color.replace('#','hex-')}"
             marker = dwg.marker(
-                id=f'arrow-{color}', insert=(0, 3), size=(1.5, 1.5),
+                id=safe_id, insert=(0, 3), size=(1.5, 1.5),
                 orient='auto', markerUnits='userSpaceOnUse'
             )
             marker.add(dwg.path(d="M0,2 L0,4 L3,3 z", fill=color))
             dwg.defs.add(marker)
             arrow_markers[color] = marker
 
-        # Step 5: Coarse grid for slope arrows
+        # --- 5) Coarse grid for slope arrows ---
         num_cells = 18
         x_grid = np.linspace(x_min, x_max, num_cells)
         y_grid = np.linspace(y_min, y_max, num_cells)
-        xx_coarse, yy_coarse = np.meshgrid(x_grid, y_grid)
-        grid_z_coarse = griddata(points, values, (xx_coarse, yy_coarse), method='nearest')
-        dy, dx = np.gradient(grid_z_coarse, y_grid[1] - y_grid[0], x_grid[1] - x_grid[0])
+        xx_c, yy_c = np.meshgrid(x_grid, y_grid)
 
-        # Step 6: Draw slope arrows
-        arrow_length = 5
+        grid_z_c = griddata(points, elevations, (xx_c, yy_c), method='nearest')
+
+        # If any NaNs persist, skip arrows there
+        # Gradient: note spacing is in SVG px
+        dy, dx = np.gradient(grid_z_c, y_grid[1]-y_grid[0], x_grid[1]-x_grid[0])
+
+        # --- 6) Draw slope arrows (pointing downhill) ---
+        arrow_length = 5.0  # px length
         for j in range(num_cells):
             for i in range(num_cells):
-                if np.isnan(dx[j, i]) or np.isnan(dy[j, i]):
+                if not np.isfinite(dx[j, i]) or not np.isfinite(dy[j, i]):
                     continue
                 gx, gy = dx[j, i], dy[j, i]
-                magnitude = np.hypot(gx, gy)
-                if magnitude < 0.00001:
+                mag = float(np.hypot(gx, gy))
+                if mag < 1e-6:
                     continue
-                gx /= magnitude
-                gy /= magnitude
-                start_x, start_y = xx_coarse[j, i], yy_coarse[j, i]
-                end_x = start_x - arrow_length * gx
-                end_y = start_y - arrow_length * gy
-                color = get_arrow_color(magnitude * 100)
+
+                # Normalize gradient; slope arrows point downhill => subtract gradient
+                gx /= mag; gy /= mag
+                start_x = xx_c[j, i]; start_y = yy_c[j, i]
+                end_x   = start_x - arrow_length * gx
+                end_y   = start_y - arrow_length * gy
+
+                slope_percent = mag * 100.0
+                color = get_arrow_color(slope_percent)
+
                 dwg.add(dwg.line(
                     start=(start_x, start_y), end=(end_x, end_y),
                     stroke=color, stroke_width=0.4,
                     marker_end=arrow_markers[color].get_funciri()
                 ))
+
     except Exception as e:
         print("ERROR in generate_contours_and_arrows:", str(e))
+
 
 
 # draw a three-yard grid over the green dwg that is aligned with the center of the green
@@ -2408,36 +2449,21 @@ def to_float(val):
     raise ValueError(f"Unexpected type for padding value: {type(val)}")
 
 
-# SVG add padding, center content, add clip-path to final box, and save
-def add_svg_padding_and_save(
-    dwg,
-    file_name,
-    top_y_pad,
-    bottom_y_pad,
-    left_x_pad,
-    right_x_pad,
-    background_color="#FFFFFF",
-    output_folder="output"
-):
+#SVG add padding and save image, adds a white color to the background
+def add_svg_padding_and_save(dwg, file_name, top_y_pad, bottom_y_pad, left_x_pad, right_x_pad, background_color="#FFFFFF", output_folder="output"):
     from svgwrite import Drawing
-
-    # --- Helpers ---
+    
     def parse_svg_length(length):
-        """
-        Return a numeric length in millimeters.
-        Supports: 'mm' and 'px' (px converted at 300 DPI).
-        """
         if isinstance(length, str):
             if length.endswith("mm"):
-                return float(length[:-2])
+                return float(length.replace("mm", ""))
             elif length.endswith("px"):
-                px = float(length[:-2])
-                # 300 DPI => 1 px = 25.4 / 300 mm
-                return px * 25.4 / 300.0
+                px = float(length.replace("px", ""))
+                return px * 25.4 / 300  # Convert px to mm at 300 DPI
             else:
                 raise ValueError(f"Unsupported SVG length unit in: {length}")
         elif isinstance(length, (float, int)):
-            return float(length)  # assume already in mm
+            return float(length)
         else:
             raise ValueError(f"Invalid SVG length format: {length}")
 
@@ -2449,82 +2475,48 @@ def add_svg_padding_and_save(
             raise
 
     try:
-        old_width_mm = parse_svg_length(dwg['width'])
-        old_height_mm = parse_svg_length(dwg['height'])
+        old_width = parse_svg_length(dwg['width'])
+        old_height = parse_svg_length(dwg['height'])
     except Exception as e:
         print(f"[ERROR] Failed to parse width/height from dwg: {e}")
         raise
 
-    # Convert provided padding (assumed in px) to mm at 300 DPI
-    # 1 px = 25.4 / 300 mm
-    px_to_mm = 25.4 / 300.0
+    pad_factor = 25.4 / 300  # Convert px to mm assuming 96dpi
+
     try:
-        left_pad_mm = to_float(left_x_pad) * px_to_mm
-        right_pad_mm = to_float(right_x_pad) * px_to_mm
-        top_pad_mm = to_float(top_y_pad) * px_to_mm
-        bottom_pad_mm = to_float(bottom_y_pad) * px_to_mm
+        left_pad_mm = to_float(left_x_pad) * pad_factor
+        right_pad_mm = to_float(right_x_pad) * pad_factor
+        top_pad_mm = to_float(top_y_pad) * pad_factor
+        bottom_pad_mm = to_float(bottom_y_pad) * pad_factor
     except Exception as e:
         print(f"[ERROR] Padding conversion failed: {e}")
         raise
 
-    # Final (padded) box size in mm
-    new_width_mm = old_width_mm + left_pad_mm + right_pad_mm
-    new_height_mm = old_height_mm + top_pad_mm + bottom_pad_mm
-
-    # Center the original content in the final box
-    # (This ignores asymmetric padding and centers purely by box geometry.)
-    tx_mm = (new_width_mm - old_width_mm) / 2.0
-    ty_mm = (new_height_mm - old_height_mm) / 2.0
+    new_width = old_width + left_pad_mm + right_pad_mm
+    new_height = old_height + top_pad_mm + bottom_pad_mm
 
     try:
-        # Create the final drawing sized to the padded box
         padded_dwg = Drawing(
             filename=f"{output_folder}/{file_name}",
-            size=(f"{new_width_mm}mm", f"{new_height_mm}mm"),
-            profile="full",
+            size=(f"{new_width}mm", f"{new_height}mm")
         )
-        # Optional: a unitless viewBox that matches the mm size for consistent scaling
-        padded_dwg.viewbox(0, 0, new_width_mm, new_height_mm)
+		#creates the final drawing box that should contain everything. 
+        padded_dwg.add(padded_dwg.rect(
+            insert=(0, 0),
+            size=(f"{new_width}mm", f"{new_height}mm"),
+            fill=background_color
+        ))
 
-        # Background (final drawing box)
-        padded_dwg.add(
-            padded_dwg.rect(
-                insert=(0, 0),
-                size=(new_width_mm, new_height_mm),
-                fill=background_color,
-            )
-        )
-
-        # Define a clipPath that matches the final box (userSpaceOnUse)
-        clip = padded_dwg.clipPath(id="final-drawing-box-clip", clipPathUnits="userSpaceOnUse")
-        clip.add(
-            padded_dwg.rect(
-                insert=(0, 0),
-                size=(new_width_mm, new_height_mm)
-            )
-        )
-        padded_dwg.defs.add(clip)
-
-        # Group for original content, centered and clipped to the final box
-        centered_group = padded_dwg.g(
-            id="centered-content",
-            transform=f"translate({tx_mm},{ty_mm})",
-            clip_path=clip.get_funciri()
-        )
-
-        # Move all existing elements from the original dwg into the centered group
-        for element in list(dwg.elements):
-            centered_group.add(element)
-
-        padded_dwg.add(centered_group)
+        group = dwg.g(transform=f"translate({left_pad_mm},{top_pad_mm})")
+        for element in dwg.elements:
+            group.add(element)
+        padded_dwg.add(group)
 
         padded_dwg.save()
-        print(f"[INFO] Saved padded & clipped SVG to {padded_dwg.filename}")
-
+        print(f"[INFO] Saved padded SVG to {padded_dwg.filename}")
     except Exception as e:
         print(f"[ERROR] Failed during SVG creation or saving: {e}")
         raise
-
 
 
 
@@ -2890,7 +2882,7 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 		drawFeatures(features_group, final_tee_boxes, "#c3c3c3", line_width=-1)
 		drawFeatures(features_group, final_water_hazards, "#b4b4b4", line_width=-1)
 		drawFeatures(features_group, final_woods, "#b4b4b4", line_width=-1)
-		drawFeatures(features_group, final_green_array, "#6666e0", line_width=3)
+		drawFeatures(features_group, final_green_array, "#0ccb1f", line_width=3)
 		drawFeatures(features_group, final_sand_traps, "#ebebeb", line_width=-1)
 		print(type(elevation_map), elevation_map)
 
@@ -2901,7 +2893,11 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 		# and to make it easier to figure out carry distances to greenside bunkers
 		print("# we also want to overlay a 3-yard grid to show how large the green is.This is the rotation angle:", angle)
 		green_grid_svg = getGreenGrid(adjusted_hole_array, ypp, rotated_dwg, hole_way_nodes, angle, elevation_map)
+            
+		# save the green dwg to the greens folder
 		green_grid_svg.saveas(f"greens/{file_name.replace('.png', '.svg')}")
+            
+
   
 		#cv2.imwrite(("greens/" + file_name), green_grid)
 
