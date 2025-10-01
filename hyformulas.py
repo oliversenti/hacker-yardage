@@ -2332,7 +2332,7 @@ def getGreenGrid(adjusted_hole_array, ypp, dwg, holeway_nodes, angle, elevation_
     return dwg
 
 
-
+""" 
 def getFixedSizedwg(rotated_dwg, final_green_array, adjusted_hole_array, ypp, target_width=1275, target_height=2100):
     # Create a blank white canvas with fixed dimensions
     fixed_dwg = np.ones((target_height, target_width, 3), dtype=np.uint8) * 255
@@ -2389,7 +2389,7 @@ def getFixedSizedwg(rotated_dwg, final_green_array, adjusted_hole_array, ypp, ta
     for hole in fixed_hole_array:
         dwg.add(dwg.circle(center=(hole[0], hole[1]), r=hole_radius, fill="black"))
     
-    return dwg, fixed_green_array, fixed_hole_array, fixed_ypp
+    return dwg, fixed_green_array, fixed_hole_array, fixed_ypp """
 
 
 
@@ -2408,21 +2408,36 @@ def to_float(val):
     raise ValueError(f"Unexpected type for padding value: {type(val)}")
 
 
-#SVG add padding and save image, adds a white color to the background
-def add_svg_padding_and_save(dwg, file_name, top_y_pad, bottom_y_pad, left_x_pad, right_x_pad, background_color="#FFFFFF", output_folder="output"):
+# SVG add padding, center content, add clip-path to final box, and save
+def add_svg_padding_and_save(
+    dwg,
+    file_name,
+    top_y_pad,
+    bottom_y_pad,
+    left_x_pad,
+    right_x_pad,
+    background_color="#FFFFFF",
+    output_folder="output"
+):
     from svgwrite import Drawing
-    
+
+    # --- Helpers ---
     def parse_svg_length(length):
+        """
+        Return a numeric length in millimeters.
+        Supports: 'mm' and 'px' (px converted at 300 DPI).
+        """
         if isinstance(length, str):
             if length.endswith("mm"):
-                return float(length.replace("mm", ""))
+                return float(length[:-2])
             elif length.endswith("px"):
-                px = float(length.replace("px", ""))
-                return px * 25.4 / 300  # Convert px to mm at 300 DPI
+                px = float(length[:-2])
+                # 300 DPI => 1 px = 25.4 / 300 mm
+                return px * 25.4 / 300.0
             else:
                 raise ValueError(f"Unsupported SVG length unit in: {length}")
         elif isinstance(length, (float, int)):
-            return float(length)
+            return float(length)  # assume already in mm
         else:
             raise ValueError(f"Invalid SVG length format: {length}")
 
@@ -2434,48 +2449,82 @@ def add_svg_padding_and_save(dwg, file_name, top_y_pad, bottom_y_pad, left_x_pad
             raise
 
     try:
-        old_width = parse_svg_length(dwg['width'])
-        old_height = parse_svg_length(dwg['height'])
+        old_width_mm = parse_svg_length(dwg['width'])
+        old_height_mm = parse_svg_length(dwg['height'])
     except Exception as e:
         print(f"[ERROR] Failed to parse width/height from dwg: {e}")
         raise
 
-    pad_factor = 25.4 / 300  # Convert px to mm assuming 96dpi
-
+    # Convert provided padding (assumed in px) to mm at 300 DPI
+    # 1 px = 25.4 / 300 mm
+    px_to_mm = 25.4 / 300.0
     try:
-        left_pad_mm = to_float(left_x_pad) * pad_factor
-        right_pad_mm = to_float(right_x_pad) * pad_factor
-        top_pad_mm = to_float(top_y_pad) * pad_factor
-        bottom_pad_mm = to_float(bottom_y_pad) * pad_factor
+        left_pad_mm = to_float(left_x_pad) * px_to_mm
+        right_pad_mm = to_float(right_x_pad) * px_to_mm
+        top_pad_mm = to_float(top_y_pad) * px_to_mm
+        bottom_pad_mm = to_float(bottom_y_pad) * px_to_mm
     except Exception as e:
         print(f"[ERROR] Padding conversion failed: {e}")
         raise
 
-    new_width = old_width + left_pad_mm + right_pad_mm
-    new_height = old_height + top_pad_mm + bottom_pad_mm
+    # Final (padded) box size in mm
+    new_width_mm = old_width_mm + left_pad_mm + right_pad_mm
+    new_height_mm = old_height_mm + top_pad_mm + bottom_pad_mm
+
+    # Center the original content in the final box
+    # (This ignores asymmetric padding and centers purely by box geometry.)
+    tx_mm = (new_width_mm - old_width_mm) / 2.0
+    ty_mm = (new_height_mm - old_height_mm) / 2.0
 
     try:
+        # Create the final drawing sized to the padded box
         padded_dwg = Drawing(
             filename=f"{output_folder}/{file_name}",
-            size=(f"{new_width}mm", f"{new_height}mm")
+            size=(f"{new_width_mm}mm", f"{new_height_mm}mm"),
+            profile="full",
         )
-		#creates the final drawing box that should contain everything. 
-        padded_dwg.add(padded_dwg.rect(
-            insert=(0, 0),
-            size=(f"{new_width}mm", f"{new_height}mm"),
-            fill=background_color
-        ))
+        # Optional: a unitless viewBox that matches the mm size for consistent scaling
+        padded_dwg.viewbox(0, 0, new_width_mm, new_height_mm)
 
-        group = dwg.g(transform=f"translate({left_pad_mm},{top_pad_mm})")
-        for element in dwg.elements:
-            group.add(element)
-        padded_dwg.add(group)
+        # Background (final drawing box)
+        padded_dwg.add(
+            padded_dwg.rect(
+                insert=(0, 0),
+                size=(new_width_mm, new_height_mm),
+                fill=background_color,
+            )
+        )
+
+        # Define a clipPath that matches the final box (userSpaceOnUse)
+        clip = padded_dwg.clipPath(id="final-drawing-box-clip", clipPathUnits="userSpaceOnUse")
+        clip.add(
+            padded_dwg.rect(
+                insert=(0, 0),
+                size=(new_width_mm, new_height_mm)
+            )
+        )
+        padded_dwg.defs.add(clip)
+
+        # Group for original content, centered and clipped to the final box
+        centered_group = padded_dwg.g(
+            id="centered-content",
+            transform=f"translate({tx_mm},{ty_mm})",
+            clip_path=clip.get_funciri()
+        )
+
+        # Move all existing elements from the original dwg into the centered group
+        for element in list(dwg.elements):
+            centered_group.add(element)
+
+        padded_dwg.add(centered_group)
 
         padded_dwg.save()
-        print(f"[INFO] Saved padded SVG to {padded_dwg.filename}")
+        print(f"[INFO] Saved padded & clipped SVG to {padded_dwg.filename}")
+
     except Exception as e:
         print(f"[ERROR] Failed during SVG creation or saving: {e}")
         raise
+
 
 
 
