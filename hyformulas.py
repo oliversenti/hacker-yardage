@@ -2450,16 +2450,29 @@ def to_float(val):
 
 
 #SVG add padding and save image, adds a white color to the background
-def add_svg_padding_and_save(dwg, file_name, top_y_pad, bottom_y_pad, left_x_pad, right_x_pad, background_color="#FFFFFF", output_folder="output"):
-    from svgwrite import Drawing
+def add_svg_padding_and_save(
+    dwg,
+    file_name,
+    top_y_pad,
+    bottom_y_pad,
+    left_x_pad,
+    right_x_pad,
+    background_color="#FFFFFF",
+    output_folder="output",
     
+	rectangle_stroke="#000000",
+    rectangle_stroke_width=0.5,
+):
+    from svgwrite import Drawing
+    import copy, os
+
     def parse_svg_length(length):
         if isinstance(length, str):
             if length.endswith("mm"):
-                return float(length.replace("mm", ""))
+                return float(length[:-2])
             elif length.endswith("px"):
-                px = float(length.replace("px", ""))
-                return px * 25.4 / 300  # Convert px to mm at 300 DPI
+                px = float(length[:-2])
+                return px * 25.4 / 300.0  # px -> mm @ 300 DPI
             else:
                 raise ValueError(f"Unsupported SVG length unit in: {length}")
         elif isinstance(length, (float, int)):
@@ -2467,56 +2480,104 @@ def add_svg_padding_and_save(dwg, file_name, top_y_pad, bottom_y_pad, left_x_pad
         else:
             raise ValueError(f"Invalid SVG length format: {length}")
 
-    def to_float(value):
+    def to_float(v):
         try:
-            return float(value)
+            return float(v)
         except Exception as e:
-            print(f"[ERROR] Could not convert {value} to float: {e}")
+            print(f"[ERROR] Could not convert {v} to float: {e}")
             raise
 
-    try:
-        old_width = parse_svg_length(dwg['width'])
-        old_height = parse_svg_length(dwg['height'])
-    except Exception as e:
-        print(f"[ERROR] Failed to parse width/height from dwg: {e}")
-        raise
+    # Source size (assumes dwg['width']/['height'])
+    old_w_mm = parse_svg_length(dwg['width'])
+    old_h_mm = parse_svg_length(dwg['height'])
 
-    pad_factor = 25.4 / 300  # Convert px to mm assuming 96dpi
+    # Padding px -> mm
+    px_to_mm = 25.4 / 300.0
+    left_pad_mm   = to_float(left_x_pad)   * px_to_mm
+    right_pad_mm  = to_float(right_x_pad)  * px_to_mm
+    top_pad_mm    = to_float(top_y_pad)    * px_to_mm
+    bottom_pad_mm = to_float(bottom_y_pad) * px_to_mm
 
-    try:
-        left_pad_mm = to_float(left_x_pad) * pad_factor
-        right_pad_mm = to_float(right_x_pad) * pad_factor
-        top_pad_mm = to_float(top_y_pad) * pad_factor
-        bottom_pad_mm = to_float(bottom_y_pad) * pad_factor
-    except Exception as e:
-        print(f"[ERROR] Padding conversion failed: {e}")
-        raise
+    new_w_mm = old_w_mm + left_pad_mm + right_pad_mm
+    new_h_mm = old_h_mm + top_pad_mm + bottom_pad_mm
 
-    new_width = old_width + left_pad_mm + right_pad_mm
-    new_height = old_height + top_pad_mm + bottom_pad_mm
+    os.makedirs(output_folder, exist_ok=True)
+    out_path = f"{output_folder}/{file_name}"
 
-    try:
-        padded_dwg = Drawing(
-            filename=f"{output_folder}/{file_name}",
-            size=(f"{new_width}mm", f"{new_height}mm")
-        )
-		#creates the final drawing box that should contain everything. 
-        padded_dwg.add(padded_dwg.rect(
+    # New drawing
+    padded = Drawing(filename=out_path, size=(f"{new_w_mm}mm", f"{new_h_mm}mm"), profile="full")
+    padded.viewbox(0, 0, new_w_mm, new_h_mm)
+
+    # --- Bring over source <defs> so styles/markers/gradients still work ---
+    # Find the source defs block (if any) and copy its children
+    for el in list(dwg.elements):
+        if getattr(el, "elementname", "") == "defs":
+            for child in el.elements:
+                padded.defs.add(copy.deepcopy(child))
+
+    # --- Final-box clipPath ---
+    clip = padded.clipPath(id="final-drawing-box-clip", clipPathUnits="userSpaceOnUse")
+    clip.add(padded.rect(insert=(0, 0), size=(new_w_mm, new_h_mm)))
+    padded.defs.add(clip)
+    
+	 # Content group translated by padding
+    translated = padded.g(
+        id="content-translated",
+        transform=f"translate({left_pad_mm},{top_pad_mm})"
+    )
+
+    # --- Clip group that contains EVERYTHING ---
+    final_group = padded.g(
+        id="final-drawing-box-clip-group",
+        clip_path=clip.get_funciri()
+    )
+    
+	# Copy all non-defs top-level elements
+    for el in list(dwg.elements):
+        if getattr(el, "elementname", "") == "defs":
+            continue
+        translated.add(copy.deepcopy(el))
+
+    # --- content-translated (applies padding offset) ---
+    content_translated = padded.g(
+        id="content-translated",
+        transform=f"translate({left_pad_mm},{top_pad_mm})"
+    )
+
+    # --- final-drawing-box (clip group) ---
+    final_box_group = padded.g(
+        id="final-drawing-box",
+        clip_path=clip.get_funciri()
+    )
+
+    # --- features: copy all non-defs top-level elements from source ---
+    features_group = padded.g(id="features")
+    for el in list(dwg.elements):
+        if getattr(el, "elementname", "") == "defs":
+            continue
+        features_group.add(copy.deepcopy(el))
+
+    # add features first (per your specified order)
+    final_box_group.add(features_group)
+
+    # --- rectangle outline of the final box (no fill, on top in DOM order you asked) ---
+    final_box_group.add(
+        padded.rect(
             insert=(0, 0),
-            size=(f"{new_width}mm", f"{new_height}mm"),
-            fill=background_color
-        ))
+            size=(new_w_mm, new_h_mm),
+            fill="none",
+            stroke=rectangle_stroke,
+            stroke_width=rectangle_stroke_width
+        )
+    )
 
-        group = dwg.g(transform=f"translate({left_pad_mm},{top_pad_mm})")
-        for element in dwg.elements:
-            group.add(element)
-        padded_dwg.add(group)
+    # assemble tree
+    content_translated.add(final_box_group)
+    padded.add(content_translated)
 
-        padded_dwg.save()
-        print(f"[INFO] Saved padded SVG to {padded_dwg.filename}")
-    except Exception as e:
-        print(f"[ERROR] Failed during SVG creation or saving: {e}")
-        raise
+    # save once
+    padded.save()
+    print(f"[INFO] Saved padded SVG to {padded.filename}")
 
 
 
