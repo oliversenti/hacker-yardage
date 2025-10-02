@@ -151,9 +151,9 @@ def update_fields(event):
 btn_confirm = tk.Button(text="Generate Yardages", master=frm_button, command=run_program, width=20)
 btn_confirm.pack()
 
-link1 = tk.Label(master=frm_button, text="Support Hacker Yardage by buying me a coffee", fg="blue")
+link1 = tk.Label(master=frm_button, text="proudly provided by Beyond Your Swing", fg="blue")
 link1.pack(pady=10)
-link1.bind("<Button-1>", lambda e: callback("https://www.buymeacoffee.com/elementninety3"))
+link1.bind("<Button-1>", lambda e: callback("http://www.beyondyourswing.com"))
 
 lbl_coords = tk.Label(master=frm_title,
                       text="Enter the coordinates from OSM for your course or select course from database:")

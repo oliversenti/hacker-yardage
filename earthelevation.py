@@ -2,6 +2,7 @@ import requests
 import time
 import sqlite3
 import Constants
+import logging
 import os
 
 key = Constants.API_KEY
@@ -37,27 +38,31 @@ def calcElevation(lat, lon):
         cursor.execute(
             'SELECT elevation FROM elevation_cache WHERE lat = ? AND lon = ?', (lat_str, lon_str))
         result = cursor.fetchone()
+        print("elevation result:", result)
 
-        if result:
+        if result is not None and result[0] > 0.0:
             elevation = result[0]
             print(f"Cache hit for ({lat_str}, {lon_str}): {elevation} meters")
             return round(elevation, 2)
 
         # Not in cache — query Google API
-        print("Elevation not found in Cache - querying Google API!")
+        print("Elevation not found in Cache - querying Elevation API!")
         # url = f"https://maps.googleapis.com/maps/api/elevation/json?locations={lat_str},{lon_str}&key={key}"
         # using gpxz free tier
         url = f"https://api.gpxz.io/v1/elevation/gmaps-compat/json?locations={lat_str},{lon_str}&key={key}"
         print(url, "this is the google api url")
-        time.sleep(0.5)  # throttle API calls to meet requests limits
+        time.sleep(1)  # throttle API calls to meet requests limits
 
         json_response = requests.get(url).json()
 
         try:
             elevation = json_response['results'][0]['elevation']
         except (KeyError, IndexError):
-            raise RuntimeError(
+            logging.warning(
                 f"Invalid response from Google Elevation API: {json_response}")
+            elevation = 0
+            # raise RuntimeError(
+            #    f"Invalid response from Google Elevation API: {json_response}")
 
         print("this is the elevation result from google earth:", elevation)
 
