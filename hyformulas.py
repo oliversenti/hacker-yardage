@@ -2369,7 +2369,7 @@ def getGreenGrid(adjusted_hole_array, ypp, dwg, holeway_nodes, angle, elevation_
         dwg.add(dwg.line(start=(x, gy_rd), end=(x_lines_min[-1], gy_rd), stroke_width=line_thickness))
 
     # Draw the border around the cropped grid area (using a rectangle)
-    dwg.add(dwg.rect(insert=(xmin, ymin), size=(xmax - xmin, ymax - ymin), stroke=grid_color, stroke_width=2, fill="none"))
+    dwg.add(dwg.rect(insert=(x_lines_min[-1], y_lines_min[-1]), size=(x_lines_max[-1] - x_lines_min[-1], y_lines_max[-1] - y_lines_min[-1]), stroke=grid_color, stroke_width=line_thickness, fill="none"))
     
     
     # Define clipping path ID
