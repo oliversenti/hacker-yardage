@@ -62,7 +62,7 @@ def getBoundingBoxLatLon(nodes):
 
 def getOSMGolfWays(bottom_lat, left_lon, top_lat, right_lon, printf=print):
 
-	op = overpy.Overpass(url="https://overpass.private.coffee/api/interpreter")
+	op = overpy.Overpass(url="https://overpass.osm.jp/api/interpreter")
 
 	# create the coordinate string for our request - order is South, West, North, East
 	coord_string = str(bottom_lat) + "," + str(left_lon) + \
@@ -83,7 +83,7 @@ def getOSMGolfWays(bottom_lat, left_lon, top_lat, right_lon, printf=print):
 def getOSMGolfData(bottom_lat, left_lon, top_lat, right_lon, printf=print):
 
 	# optional replacement url if servers are busy - url="https://overpass.kumi.systems/api/interpreter"
-	op = overpy.Overpass(url="https://overpass.private.coffee/api/interpreter")
+	op = overpy.Overpass(url="https://overpass.osm.jp/api/interpreter")
 
 	# create the coordinate string for our request - order is South, West, North, East
 	coord_string = str(bottom_lat) + "," + str(left_lon) + \
@@ -244,6 +244,8 @@ def generateSVG(latmin, lonmin, latmax, lonmax, lat_degree_distance, lon_degree_
     # Create a group for all features. This is to ensure that we can crop the paths and only show what's important
     features_group = dwg.g(id="features")
     dwg.add(features_group)
+    filename = "newdrawing.svg"
+    dwg.saveas(filename) #saving for debugging purposes
 
     return dwg, x_dim, y_dim, ypp
 
@@ -541,7 +543,7 @@ def categorizeWays(hole_result, hole_minlat, hole_minlon, hole_maxlat, hole_maxl
     dwg = cv2.resize(dwg, (width, height), interpolation=cv2.INTER_AREA) """
      
 
-#draw features with SVG instead of openCV raster image. 
+#draw features with SVG
 def drawFeatureSVG(features_group, array, color, fill, line_width=1, smoothness=1.0, samples=1000):
     # Convert the input array to numpy array
     nds = np.array(array)
@@ -678,7 +680,7 @@ def drawTrees(features_group, feature_list, stroke_color="#228B22"):  # Default 
         
         tree_group.add(trunk)
         
-        #Add the central trunk circle (adjust position based on size)
+        #add the central trunk circle (adjust position based on size) 
         trunk = svgwrite.shapes.Circle(center=(size//2, size//2), r=size//33, fill=trunk_color)
         
 
@@ -1178,7 +1180,10 @@ def getNewdwg(dwg, angle, dwg_bg_color):
     new_dwg = svgwrite.Drawing(size=(f"{y_dim}px", f"{x_dim}px")) #swap for vertical orientation
 
     # Simulate background color by drawing a filled rectangle
-    #new_dwg.add(new_dwg.rect(insert=(0, 0), size=(x_dim, y_dim), fill="pink"))#dwg_bg_color
+    new_dwg.add(new_dwg.rect(insert=(0, 0), size=(y_dim, x_dim), fill="pink"))#dwg_bg_color
+    filename = "new_rotated_drawing.svg"
+    new_dwg.saveas(filename)
+    print(f"[DEBUG] New drawing saved as {filename}")	
 
     return new_dwg, ymin, xmin, ymax, xmax
 
@@ -2307,43 +2312,61 @@ def getGreenGrid(adjusted_hole_array, ypp, dwg, holeway_nodes, angle, elevation_
     
     hole_origin, midpoint, green_center = getThreeWaypoints(adjusted_hole_array)
     x, y = map(int, green_center)
+    #grid spacing 
+    spacing = 3 / ypp # # pixel size of 3 yards
+    print("[DEBUG]spacing value:", spacing)
 
     # Define cropping box (in pixel coordinates)
-    xmin = int(x - (30 / ypp))
+    xmin = int(x - (30 / ypp)) # 30 yards from center to
     xmax = int(x + (30 / ypp))
     ymin = int(y - (30 / ypp))
-    ymax = int(y + (30 / ypp))#was 39 which I think was a typo
+    ymax = int(y + (30 / ypp))
     
-    x_grid_min = int(x - (30 / ypp))  # match xmin
+    x_lines_min = [x-k * spacing for k in range(11)]  # 0..30 yards
+    y_lines_min = [y-k * spacing for k in range(11)]  # 0..30 yards
+    x_lines_max = [x+k * spacing for k in range(11)]  # 0..30 yards
+    y_lines_max = [y+k * spacing for k in range(11)]  # 0..30 yards
+    
 
     # Draw central grid marker in SVG (center marker)
-    rect_half = int(0.5 / ypp)
-    start = (x - rect_half, y + rect_half)
-    end = (x + rect_half, y - rect_half)
-    rectangle_points = [(start[0], start[1]), (end[0], start[1]),
-                        (end[0], end[1]), (start[0], end[1])]
-    draw_polygon(dwg, rectangle_points, stroke_color="#000000", stroke_width=2, fill="none")
+    circle_radius = int(0.5/ ypp)
+    dwg.add(dwg.circle(center=(x, y), r=circle_radius, fill="#CE1C1C"))
 
     # Set up grid spacing
-    spacing = 3 / ypp
     grid_color = "#d1d1d1"  # Grid color as a hex code, light gray
     line_thickness = 2 if (xmax - xmin) > 850 else 1  # Set line thickness based on width
 
-    # Draw vertical grid lines (right of center)
-    for gx in range(xmin, xmax, int(spacing)):
-        dwg.add(dwg.line(start=(gx, ymin), end=(gx, ymax), stroke=grid_color, stroke_width=line_thickness))
+    # Draw vertical grid lines from green center to the left and up, increasing by 3 yards to the left with every iteration
+    for gx_lu in x_lines_min:
+        dwg.add(dwg.line(start=(gx_lu, y), end=(gx_lu, y_lines_min[-1]), stroke_width=line_thickness))
 
-    # Draw vertical grid lines (left of center)
-    for gx in range(xmin - int(spacing), x_grid_min - 1, -int(spacing)):
-    	dwg.add(dwg.line(start=(gx, ymin), end=(gx, ymax), stroke=grid_color, stroke_width=line_thickness))
+    # Draw vertical grid lines from green center to the right and up, increasing by 3 yards to the left with every iteration
+    for gx_ru in x_lines_max:
+        dwg.add(dwg.line(start=(gx_ru, y), end=(gx_ru, y_lines_min[-1]), stroke_width=line_thickness))
 
-    # Draw horizontal grid lines (below center)
-    for gy in range(ymin, ymax, int(spacing)):
-        dwg.add(dwg.line(start=(xmin, gy), end=(xmax, gy), stroke=grid_color, stroke_width=line_thickness))
+    # Draw vertical grid lines from green center to the left and down, increasing by 3 yards to the left with every iteration
+    for gx_ld in x_lines_min:
+        dwg.add(dwg.line(start=(gx_ld, y), end=(gx_ld, y_lines_max[-1]), stroke_width=line_thickness))
 
-    # Draw horizontal grid lines (above center)
-    for gy in range(ymin - int(spacing), 0, -int(spacing)):
-        dwg.add(dwg.line(start=(xmin, gy), end=(xmax, gy), stroke=grid_color, stroke_width=line_thickness))
+    # Draw vertical grid lines from green center to the right and down, increasing by 3 yards to the left with every iteration
+    for gx_rd in x_lines_max:
+        dwg.add(dwg.line(start=(gx_rd, y), end=(gx_rd, y_lines_max[-1]), stroke_width=line_thickness))
+
+    # Draw horizontal grid lines from center to left and up, increasing by 3 yards to the top with every iteration
+    for gy_lu in y_lines_min:
+        dwg.add(dwg.line(start=(x, gy_lu), end=(x_lines_min[-1], gy_lu), stroke_width=line_thickness))
+
+    # Draw horizontal grid lines from center to right and up, increasing by 3 yards to the top with every iteration
+    for gy_ru in y_lines_min:
+        dwg.add(dwg.line(start=(x, gy_ru), end=(x_lines_max[-1], gy_ru), stroke_width=line_thickness))
+
+    # Draw horizontal grid lines from center to left and down, increasing by 3 yards to the top with every iteration
+    for gy_ld in y_lines_max:
+        dwg.add(dwg.line(start=(x, gy_ld), end=(x_lines_max[-1], gy_ld), stroke_width=line_thickness))
+
+    # Draw horizontal grid lines from center to right and down, increasing by 3 yards to the top with every iteration
+    for gy_rd in y_lines_max:
+        dwg.add(dwg.line(start=(x, gy_rd), end=(x_lines_min[-1], gy_rd), stroke_width=line_thickness))
 
     # Draw the border around the cropped grid area (using a rectangle)
     dwg.add(dwg.rect(insert=(xmin, ymin), size=(xmax - xmin, ymax - ymin), stroke=grid_color, stroke_width=2, fill="none"))
@@ -2367,8 +2390,10 @@ def getGreenGrid(adjusted_hole_array, ypp, dwg, holeway_nodes, angle, elevation_
         print("elevation data is found!")
     try:
         generate_contours_and_arrows(elevation_map, dwg, x, y,  green_center_lat, green_center_lon, ypp, angle)
+        dwg.saveas("green_with_contours.svg")
     except Exception as e:
         print(f"Error while generating contours and arrows: {e}")
+        
 
     return dwg
 
@@ -2567,7 +2592,7 @@ def add_svg_padding_and_save(
             size=(new_w_mm, new_h_mm),
             fill="none",
             stroke=rectangle_stroke,
-            stroke_width=rectangle_stroke_width
+            stroke_width=rectangle_stroke_width	
         )
     )
 
@@ -2734,7 +2759,6 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 		adjusted_hole_array, n1, n2, n3, n4 = adjustRotatedFeatures([rotated_waypoints], ymin, xmin)
 
 		# finally, we can draw all of the features on our dwg (with specific colors for each)
-
 		drawFeatures(features_group, final_fairways, colors["fairways"], line_width=1)
 		drawFeatures(features_group, final_tee_boxes, colors["tee boxes"], line_width=-1)
 		drawFeatures(features_group, final_water_hazards, colors["water"], line_width=-1, feature_type="water")
@@ -2746,8 +2770,8 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 		drawFeatures(features_group, final_sand_traps, colors["sand"], line_width=-1, feature_type="sand")
 		drawTrees(features_group, final_trees, colors["trees"])
         # Add the features group to the SVG
-		rotated_dwg.add(features_group)
 
+		rotated_dwg.add(features_group)
 
 		# now we need to pad or crop the dwg to get a consistent aspect ratio
 		# future TODO: clean this all up into functions, see about making aspect ratio adjustable
@@ -2949,7 +2973,8 @@ def generateYardageBook(latmin,lonmin,latmax,lonmax,replace_existing,colors,chos
 
 		# Add the features group to the SVG
 		rotated_dwg.add(features_group)
-
+		rotated_dwg.saveas("test.svg")
+		
 		# we also want to overlay a 3-yard grid to show how large the green is
 		# and to make it easier to figure out carry distances to greenside bunkers
 		print("# we also want to overlay a 3-yard grid to show how large the green is.This is the rotation angle:", angle)
